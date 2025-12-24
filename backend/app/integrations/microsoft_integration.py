@@ -7,7 +7,7 @@ from ..core.security import encrypt_token, decrypt_token
 
 settings = get_settings()
 
-SCOPES = ["Calendars.ReadWrite", "Mail.Send"]
+SCOPES = ["openid", "profile", "email", "User.Read", "Calendars.ReadWrite", "Mail.Send"]
 GRAPH_URL = "https://graph.microsoft.com/v1.0"
 
 def get_msal_app() -> ConfidentialClientApplication:
@@ -17,11 +17,12 @@ def get_msal_app() -> ConfidentialClientApplication:
         client_credential=settings.microsoft_client_secret
     )
 
-def get_auth_url() -> str:
+def get_auth_url(state: str = None) -> str:
     app = get_msal_app()
     return app.get_authorization_request_url(
         scopes=SCOPES,
-        redirect_uri=settings.microsoft_redirect_uri
+        redirect_uri=settings.microsoft_redirect_uri,
+        state=state
     )
 
 async def exchange_code(code: str) -> dict:
@@ -35,9 +36,25 @@ async def exchange_code(code: str) -> dict:
     if "access_token" in result:
         return {
             "access_token": encrypt_token(result["access_token"]),
-            "refresh_token": encrypt_token(result.get("refresh_token", ""))
+            "refresh_token": encrypt_token(result.get("refresh_token", "")),
+            "raw_token": result["access_token"]  # For immediate use to fetch user info
         }
     raise Exception(result.get("error_description", "Failed to get token"))
+
+async def get_user_info(access_token: str) -> dict:
+    """Get user profile info from Microsoft Graph."""
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"{GRAPH_URL}/me",
+            headers={"Authorization": f"Bearer {access_token}"}
+        )
+        response.raise_for_status()
+        data = response.json()
+        return {
+            "email": data.get("mail") or data.get("userPrincipalName"),
+            "name": data.get("displayName"),
+            "id": data.get("id")
+        }
 
 async def refresh_access_token(refresh_token: str) -> dict:
     app = get_msal_app()

@@ -1,14 +1,31 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import CommandWindow from './components/CommandWindow'
 import LoginForm from './components/LoginForm'
 import { useAppStore } from './stores/appStore'
 
 function App() {
-  const { isAuthenticated, checkAuth } = useAppStore()
+  const { isAuthenticated, checkAuth, pollDueReminders } = useAppStore()
+  const pollIntervalRef = useRef<number | null>(null)
 
   useEffect(() => {
     checkAuth()
   }, [checkAuth])
+
+  // Start polling for due reminders when authenticated
+  useEffect(() => {
+    if (isAuthenticated) {
+      // Poll immediately
+      pollDueReminders()
+      // Then poll every 30 seconds
+      pollIntervalRef.current = window.setInterval(pollDueReminders, 30000)
+    }
+    
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current)
+      }
+    }
+  }, [isAuthenticated, pollDueReminders])
 
   return (
     <div className="min-h-screen bg-surface-950 relative overflow-hidden">

@@ -1,15 +1,17 @@
 from sqlalchemy import Column, String, DateTime, JSON, ForeignKey
-from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 import uuid
 from datetime import datetime
 from ..core.database import Base
 
+def generate_uuid():
+    return str(uuid.uuid4())
+
 class Interaction(Base):
     __tablename__ = "interactions"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
     user_message = Column(String, nullable=False)
     assistant_response = Column(String, nullable=False)
     intent = Column(String, nullable=True)

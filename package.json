@@ -1,0 +1,23 @@
+{
+  "name": "donna-ai-assistant",
+  "version": "1.0.0",
+  "description": "Donna - Your AI Executive Assistant",
+  "scripts": {
+    "backend": "cd backend && py -m uvicorn app.main:app --reload --host 0.0.0.0",
+    "desktop": "cd desktop && npm run tauri dev",
+    "mobile": "cd mobile && npx expo start",
+    "mobile:ios": "cd mobile && npx expo start --ios",
+    "mobile:android": "cd mobile && npx expo start --android",
+    
+    "dev": "start cmd /k \"cd mobile && npx expo start\" && npm run backend",
+    "dev:desktop": "start cmd /k \"cd desktop && npm run tauri dev\" && npm run backend",
+    "dev:mobile": "start cmd /k \"npm run backend\" && cd mobile && npx expo start",
+    "dev:all": "start cmd /k \"cd desktop && npm run tauri dev\" && start cmd /k \"cd mobile && npx expo start\" && npm run backend",
+    
+    "install:all": "npm install && cd backend && pip install -r requirements.txt && cd ../desktop && npm install && cd ../mobile && npm install --legacy-peer-deps"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
+

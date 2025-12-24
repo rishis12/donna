@@ -28,6 +28,7 @@ class UserResponse(BaseModel):
 class UtteranceRequest(BaseModel):
     text: str
     current_time: str
+    timezone: Optional[str] = "UTC"
     device_info: Optional[dict] = None
 
 class IntentResponse(BaseModel):

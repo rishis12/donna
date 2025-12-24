@@ -1,9 +1,35 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use auto_launch::AutoLaunchBuilder;
 use tauri::{
     CustomMenuItem, Manager, SystemTray, SystemTrayEvent, SystemTrayMenu, SystemTrayMenuItem,
     GlobalShortcutManager,
 };
+
+#[tauri::command]
+fn get_autostart_enabled() -> bool {
+    let auto_launch = AutoLaunchBuilder::new()
+        .set_app_name("Agent")
+        .set_app_path(std::env::current_exe().unwrap().to_str().unwrap())
+        .build()
+        .unwrap();
+    auto_launch.is_enabled().unwrap_or(false)
+}
+
+#[tauri::command]
+fn set_autostart_enabled(enabled: bool) -> Result<(), String> {
+    let auto_launch = AutoLaunchBuilder::new()
+        .set_app_name("Agent")
+        .set_app_path(std::env::current_exe().unwrap().to_str().unwrap())
+        .build()
+        .map_err(|e| e.to_string())?;
+    
+    if enabled {
+        auto_launch.enable().map_err(|e| e.to_string())
+    } else {
+        auto_launch.disable().map_err(|e| e.to_string())
+    }
+}
 
 fn main() {
     let quit = CustomMenuItem::new("quit".to_string(), "Quit");
@@ -16,6 +42,7 @@ fn main() {
     let system_tray = SystemTray::new().with_menu(tray_menu);
 
     tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![get_autostart_enabled, set_autostart_enabled])
         .system_tray(system_tray)
         .on_system_tray_event(|app, event| match event {
             SystemTrayEvent::LeftClick { .. } => {

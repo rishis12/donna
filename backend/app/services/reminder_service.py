@@ -40,18 +40,30 @@ async def get_due_reminders(
     within_minutes: int = 5
 ) -> List[Reminder]:
     now = datetime.utcnow()
+    # Include reminders from 5 min ago (in case we missed them) to 5 min in the future
+    past = now - timedelta(minutes=5)
     future = now + timedelta(minutes=within_minutes)
     
     query = select(Reminder).where(
         and_(
             Reminder.user_id == user_id,
             Reminder.status == ReminderStatus.ACTIVE,
-            Reminder.due_time >= now,
+            Reminder.due_time >= past,
             Reminder.due_time <= future
         )
     )
     result = await db.execute(query)
-    return result.scalars().all()
+    reminders = result.scalars().all()
+    
+    # Mark shown reminders as completed so they don't keep popping up
+    for reminder in reminders:
+        if reminder.due_time <= now:
+            reminder.status = ReminderStatus.COMPLETED
+    
+    if reminders:
+        await db.commit()
+    
+    return reminders
 
 async def complete_reminder(db: AsyncSession, reminder_id: UUID) -> Optional[Reminder]:
     result = await db.execute(select(Reminder).where(Reminder.id == reminder_id))

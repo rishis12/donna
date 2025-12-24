@@ -1,10 +1,12 @@
 from sqlalchemy import Column, String, DateTime, Enum, ForeignKey
-from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 import uuid
 import enum
 from datetime import datetime
 from ..core.database import Base
+
+def generate_uuid():
+    return str(uuid.uuid4())
 
 class ReminderStatus(str, enum.Enum):
     ACTIVE = "active"
@@ -14,8 +16,8 @@ class ReminderStatus(str, enum.Enum):
 class Reminder(Base):
     __tablename__ = "reminders"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
     text = Column(String, nullable=False)
     due_time = Column(DateTime, nullable=False)
     status = Column(Enum(ReminderStatus), default=ReminderStatus.ACTIVE)

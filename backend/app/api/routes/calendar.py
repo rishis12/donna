@@ -11,20 +11,33 @@ router = APIRouter(prefix="/calendar", tags=["calendar"])
 @router.get("/events")
 async def list_events(
     provider: str = "google",
-    max_results: int = 10,
+    max_results: int = 20,
     user: User = Depends(get_current_user)
 ):
     if provider == "google":
         if not user.google_access_token:
-            raise HTTPException(status_code=400, detail="Google not connected")
-        events = await google_integration.list_events(
+            raise HTTPException(status_code=400, detail="Google Calendar not connected. Please connect in Settings.")
+        raw_events = await google_integration.list_events(
             user.google_access_token,
             user.google_refresh_token,
             max_results
         )
+        # Format events for frontend
+        events = []
+        for e in raw_events:
+            start = e.get('start', {})
+            end = e.get('end', {})
+            events.append({
+                "id": e.get('id'),
+                "summary": e.get('summary', 'Untitled'),
+                "start": start.get('dateTime', start.get('date', '')),
+                "end": end.get('dateTime', end.get('date', '')),
+                "description": e.get('description', ''),
+                "attendees": [a.get('email') for a in e.get('attendees', []) if a.get('email')]
+            })
     elif provider == "microsoft":
         if not user.microsoft_access_token:
-            raise HTTPException(status_code=400, detail="Microsoft not connected")
+            raise HTTPException(status_code=400, detail="Microsoft Calendar not connected. Please connect in Settings.")
         events = await microsoft_integration.list_events(
             user.microsoft_access_token,
             max_results

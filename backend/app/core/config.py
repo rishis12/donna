@@ -7,8 +7,8 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./agent.db"
     encryption_key: str = "dev-encryption-key-32-bytes-long"
     
-    # OpenAI
-    openai_api_key: str = ""
+    # Groq (for LLM and Whisper)
+    groq_api_key: str = ""
     
     # Google OAuth
     google_client_id: str = ""

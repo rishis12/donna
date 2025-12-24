@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from .core.database import init_db
-from .api.routes import auth, utterance, reminders, calendar, email
+from .api.routes import auth, utterance, reminders, calendar, email, action
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -29,6 +29,7 @@ app.include_router(utterance.router)
 app.include_router(reminders.router)
 app.include_router(calendar.router)
 app.include_router(email.router)
+app.include_router(action.router)
 
 @app.get("/")
 async def root():

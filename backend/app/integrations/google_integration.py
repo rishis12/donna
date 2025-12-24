@@ -9,6 +9,9 @@ from ..core.security import encrypt_token, decrypt_token
 settings = get_settings()
 
 SCOPES = [
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
     "https://www.googleapis.com/auth/calendar",
     "https://www.googleapis.com/auth/gmail.send",
     "https://www.googleapis.com/auth/gmail.compose"
@@ -29,9 +32,9 @@ def get_auth_flow() -> Flow:
         redirect_uri=settings.google_redirect_uri
     )
 
-def get_auth_url() -> str:
+def get_auth_url(state: str = None) -> str:
     flow = get_auth_flow()
-    auth_url, _ = flow.authorization_url(prompt="consent", access_type="offline")
+    auth_url, _ = flow.authorization_url(prompt="consent", access_type="offline", state=state)
     return auth_url
 
 async def exchange_code(code: str) -> dict:
@@ -40,8 +43,20 @@ async def exchange_code(code: str) -> dict:
     credentials = flow.credentials
     return {
         "access_token": encrypt_token(credentials.token),
-        "refresh_token": encrypt_token(credentials.refresh_token) if credentials.refresh_token else None
+        "refresh_token": encrypt_token(credentials.refresh_token) if credentials.refresh_token else None,
+        "raw_token": credentials.token  # For immediate use to fetch user info
     }
+
+async def get_user_info(access_token: str) -> dict:
+    """Get user profile info from Google."""
+    import httpx
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            "https://www.googleapis.com/oauth2/v2/userinfo",
+            headers={"Authorization": f"Bearer {access_token}"}
+        )
+        response.raise_for_status()
+        return response.json()
 
 def get_credentials(access_token: str, refresh_token: Optional[str] = None) -> Credentials:
     return Credentials(
@@ -101,10 +116,72 @@ async def update_event(
     creds = get_credentials(access_token, refresh_token)
     service = build("calendar", "v3", credentials=creds)
     
+    # Get the existing event
     event = service.events().get(calendarId="primary", eventId=event_id).execute()
-    event.update(updates)
     
-    return service.events().update(calendarId="primary", eventId=event_id, body=event).execute()
+    # Apply updates carefully (don't just overwrite nested dicts)
+    for key, value in updates.items():
+        event[key] = value
+    
+    # Use patch instead of update to only change specified fields
+    return service.events().patch(calendarId="primary", eventId=event_id, body=updates).execute()
+
+
+async def add_attendees_to_event(
+    access_token: str,
+    refresh_token: str,
+    event_id: str,
+    new_attendees: List[str]
+) -> dict:
+    """Add attendees to an existing event."""
+    creds = get_credentials(access_token, refresh_token)
+    service = build("calendar", "v3", credentials=creds)
+    
+    # Get the existing event
+    event = service.events().get(calendarId="primary", eventId=event_id).execute()
+    
+    # Get existing attendees and add new ones
+    existing_attendees = event.get("attendees", [])
+    existing_emails = {a.get("email") for a in existing_attendees}
+    
+    for email in new_attendees:
+        if email not in existing_emails:
+            existing_attendees.append({"email": email})
+    
+    # Update the event with new attendees
+    return service.events().patch(
+        calendarId="primary", 
+        eventId=event_id, 
+        body={"attendees": existing_attendees},
+        sendUpdates="all"  # Send invite emails
+    ).execute()
+
+
+async def cancel_event(
+    access_token: str,
+    refresh_token: str,
+    event_id: str,
+    send_notifications: bool = True
+) -> dict:
+    """Cancel/delete a calendar event."""
+    creds = get_credentials(access_token, refresh_token)
+    service = build("calendar", "v3", credentials=creds)
+    
+    # Get event info before deleting for confirmation message
+    try:
+        event = service.events().get(calendarId="primary", eventId=event_id).execute()
+        event_summary = event.get("summary", "Untitled event")
+    except:
+        event_summary = "the event"
+    
+    # Delete the event
+    service.events().delete(
+        calendarId="primary", 
+        eventId=event_id,
+        sendUpdates="all" if send_notifications else "none"
+    ).execute()
+    
+    return {"status": "cancelled", "summary": event_summary}
 
 # Gmail functions
 async def send_email(

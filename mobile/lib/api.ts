@@ -44,6 +44,7 @@ const getApiBase = () => {
 
 const API_BASE = getApiBase();
 console.log(`[API] Using backend: ${API_BASE}`);
+console.log(`[API] Environment: EXPO_PUBLIC_API_URL=${process.env.EXPO_PUBLIC_API_URL || 'not set'}`);
 
 class ApiClient {
   private token: string | null = null;

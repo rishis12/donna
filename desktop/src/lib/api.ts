@@ -1,4 +1,5 @@
-const API_BASE = 'http://localhost:8000'
+// Use environment variable for API URL, fallback to localhost for dev
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 class ApiClient {
   private token: string | null = null

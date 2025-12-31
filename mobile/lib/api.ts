@@ -8,24 +8,32 @@ import Constants from 'expo-constants';
 const YOUR_PC_IP = '192.168.1.177'; // ← CHANGE THIS to your computer's IP (run 'ipconfig' to find it)
 // ===========================================
 
-// Auto-detect the correct API URL based on platform
+// Auto-detect the correct API URL based on environment
 const getApiBase = () => {
-  // For production, use your deployed backend URL
-  // return 'https://your-backend.com';
-
-  if (Platform.OS === 'web') {  
-    return 'http://localhost:8000';
+  // Production API from environment variable
+  if (process.env.EXPO_PUBLIC_API_URL) {
+    return process.env.EXPO_PUBLIC_API_URL;
   }
   
-  if (Platform.OS === 'android') {
-    // Check if running in emulator
-    if (Constants.isDevice === false) {
-      return 'http://10.0.2.2:8000'; // Android emulator -> host machine
+  // Development - use localhost or PC IP
+  if (__DEV__) {
+    if (Platform.OS === 'web') {  
+      return 'http://localhost:8000';
     }
+    
+    if (Platform.OS === 'android') {
+      // Check if running in emulator
+      if (Constants.isDevice === false) {
+        return 'http://10.0.2.2:8000'; // Android emulator -> host machine
+      }
+    }
+    
+    // Physical device (iOS or Android) - use your PC's IP
+    return `http://${YOUR_PC_IP}:8000`;
   }
   
-  // Physical device (iOS or Android) - use your PC's IP
-  return `http://${YOUR_PC_IP}:8000`;
+  // Default to production (update with your Render URL)
+  return 'https://your-app-name.onrender.com';
 };
 
 const API_BASE = getApiBase();

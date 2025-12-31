@@ -23,6 +23,7 @@ class UserResponse(BaseModel):
     is_active: bool
     google_connected: bool = False
     microsoft_connected: bool = False
+    slack_connected: bool = False
 
 # Utterance schemas
 class UtteranceRequest(BaseModel):
@@ -88,4 +89,47 @@ class EmailSend(BaseModel):
 class ActionConfirm(BaseModel):
     action_id: str
     confirmed: bool
+
+# Gmail account schemas
+class GmailAccountCreate(BaseModel):
+    email: str
+    display_name: Optional[str] = None
+    code: str  # OAuth authorization code
+    is_primary: bool = False
+
+class GmailAccountResponse(BaseModel):
+    id: str
+    email: str
+    display_name: Optional[str]
+    is_primary: bool
+    is_active: bool
+    last_synced: Optional[datetime]
+    created_at: datetime
+
+# Messaging account schemas
+class MessagingAccountCreate(BaseModel):
+    platform: str  # 'discord', 'slack'
+    account_id: str
+    account_name: Optional[str] = None
+    channel_id: Optional[str] = None
+    bot_token: Optional[str] = None
+    webhook_url: Optional[str] = None
+    access_token: Optional[str] = None
+
+class MessagingAccountResponse(BaseModel):
+    id: str
+    platform: str
+    account_id: str
+    account_name: Optional[str]
+    channel_id: Optional[str]
+    is_active: bool
+    is_webhook_active: bool
+    created_at: datetime
+
+class MessagingMessageSend(BaseModel):
+    platform: str
+    account_id: str
+    channel_id: Optional[str] = None
+    message: str
+    thread_id: Optional[str] = None
 

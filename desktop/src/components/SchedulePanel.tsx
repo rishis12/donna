@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Calendar, Clock, Users, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Calendar, Clock, Users, RefreshCw } from 'lucide-react'
 import { api } from '../lib/api'
 
 interface CalendarEvent {
@@ -15,13 +15,13 @@ export default function SchedulePanel() {
   const [events, setEvents] = useState<CalendarEvent[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [selectedDate, setSelectedDate] = useState(new Date())
 
   const fetchEvents = async () => {
     setLoading(true)
     setError(null)
     try {
-      const response = await api.get('/calendar/events')
+      // Fetch more events to show a week ahead
+      const response = await api.get('/calendar/events?max_results=50')
       setEvents(response.events || [])
     } catch (err: any) {
       if (err.message?.includes('not connected')) {
@@ -78,23 +78,10 @@ export default function SchedulePanel() {
     new Date(a).getTime() - new Date(b).getTime()
   )
 
-  // Calculate event position and height for timeline view
-  const getEventStyle = (event: CalendarEvent) => {
-    const start = new Date(event.start)
-    const end = new Date(event.end)
-    const startHour = start.getHours() + start.getMinutes() / 60
-    const duration = (end.getTime() - start.getTime()) / (1000 * 60 * 60) // hours
-    
-    return {
-      top: `${(startHour - 6) * 60}px`, // Start from 6am
-      height: `${Math.max(duration * 60, 30)}px`, // Min 30px height
-    }
-  }
-
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <RefreshCw className="w-6 h-6 text-amber-400 animate-spin" />
+        <RefreshCw className="w-6 h-6 text-primary-400 animate-spin" />
       </div>
     )
   }
@@ -102,8 +89,10 @@ export default function SchedulePanel() {
   if (error) {
     return (
       <div className="flex flex-col items-center justify-center h-64 text-center px-4">
-        <Calendar className="w-12 h-12 text-surface-600 mb-3" />
-        <p className="text-surface-400 text-sm">{error}</p>
+        <div className="w-14 h-14 rounded-2xl bg-surface-100 flex items-center justify-center mb-4">
+          <Calendar className="w-7 h-7 text-surface-400" />
+        </div>
+        <p className="text-surface-500 text-sm">{error}</p>
       </div>
     )
   }
@@ -112,13 +101,13 @@ export default function SchedulePanel() {
     <div className="h-full flex flex-col">
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-surface-100 font-semibold flex items-center gap-2">
-          <Calendar className="w-4 h-4 text-amber-400" />
+        <h2 className="text-surface-800 font-semibold flex items-center gap-2">
+          <Calendar className="w-4 h-4 text-primary-400" />
           Your Schedule
         </h2>
         <button
           onClick={fetchEvents}
-          className="p-2 text-surface-400 hover:text-surface-200 hover:bg-surface-800/50 rounded-lg transition-all"
+          className="p-2 text-surface-400 hover:text-surface-600 hover:bg-surface-100 rounded-xl transition-all"
           title="Refresh"
         >
           <RefreshCw className="w-4 h-4" />
@@ -129,19 +118,21 @@ export default function SchedulePanel() {
       <div className="flex-1 overflow-y-auto space-y-4 pr-1">
         {events.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-48 text-center">
-            <Calendar className="w-10 h-10 text-surface-700 mb-2" />
-            <p className="text-surface-500 text-sm">No upcoming events</p>
-            <p className="text-surface-600 text-xs mt-1">Ask Donna to schedule something!</p>
+            <div className="w-12 h-12 rounded-2xl bg-surface-100 flex items-center justify-center mb-3">
+              <Calendar className="w-6 h-6 text-surface-400" />
+            </div>
+            <p className="text-surface-600 text-sm font-medium">No upcoming events</p>
+            <p className="text-surface-400 text-xs mt-1">Ask Donna to schedule something!</p>
           </div>
         ) : (
           sortedDays.map(day => (
             <div key={day}>
               {/* Day Header */}
-              <div className="sticky top-0 bg-surface-900/95 backdrop-blur-sm py-2 z-10">
-                <span className={`text-xs font-medium px-2 py-1 rounded-full ${
+              <div className="sticky top-0 bg-white/95 backdrop-blur-sm py-2 z-10">
+                <span className={`text-xs font-medium px-3 py-1.5 rounded-full ${
                   isToday(groupedEvents[day][0].start) 
-                    ? 'bg-amber-500/20 text-amber-400' 
-                    : 'bg-surface-800 text-surface-400'
+                    ? 'bg-primary-50 text-primary-500' 
+                    : 'bg-surface-100 text-surface-500'
                 }`}>
                   {getRelativeDay(groupedEvents[day][0].start)}
                 </span>
@@ -152,27 +143,27 @@ export default function SchedulePanel() {
                 {groupedEvents[day].map(event => (
                   <div
                     key={event.id}
-                    className="group bg-surface-800/60 hover:bg-surface-800 border border-surface-700/40 rounded-xl p-3 transition-all cursor-pointer"
+                    className="group bg-surface-50 hover:bg-surface-100 border border-surface-200 rounded-2xl p-4 transition-all cursor-pointer"
                   >
                     <div className="flex items-start gap-3">
                       {/* Time */}
                       <div className="flex flex-col items-center min-w-[50px]">
-                        <span className="text-amber-400 text-sm font-medium">
+                        <span className="text-primary-400 text-sm font-medium">
                           {formatTime(event.start)}
                         </span>
-                        <div className="w-px h-3 bg-surface-700 my-1" />
-                        <span className="text-surface-500 text-xs">
+                        <div className="w-px h-3 bg-surface-300 my-1" />
+                        <span className="text-surface-400 text-xs">
                           {formatTime(event.end)}
                         </span>
                       </div>
 
                       {/* Event Details */}
                       <div className="flex-1 min-w-0">
-                        <h3 className="text-surface-100 font-medium text-sm truncate">
+                        <h3 className="text-surface-800 font-medium text-sm truncate">
                           {event.summary || 'Untitled Event'}
                         </h3>
                         {event.attendees && event.attendees.length > 0 && (
-                          <div className="flex items-center gap-1 mt-1.5 text-surface-500">
+                          <div className="flex items-center gap-1 mt-1.5 text-surface-400">
                             <Users className="w-3 h-3" />
                             <span className="text-xs truncate">
                               {event.attendees.length} attendee{event.attendees.length > 1 ? 's' : ''}
@@ -180,14 +171,14 @@ export default function SchedulePanel() {
                           </div>
                         )}
                         {event.description && (
-                          <p className="text-surface-500 text-xs mt-1 line-clamp-2">
+                          <p className="text-surface-400 text-xs mt-1 line-clamp-2">
                             {event.description}
                           </p>
                         )}
                       </div>
 
                       {/* Duration badge */}
-                      <div className="flex items-center gap-1 text-surface-600 text-xs">
+                      <div className="flex items-center gap-1 text-surface-400 text-xs bg-surface-100 px-2 py-1 rounded-lg">
                         <Clock className="w-3 h-3" />
                         {(() => {
                           const start = new Date(event.start)
@@ -208,5 +199,3 @@ export default function SchedulePanel() {
     </div>
   )
 }
-
-

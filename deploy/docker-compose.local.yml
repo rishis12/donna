@@ -1,0 +1,43 @@
+version: '3.8'
+
+# Local development override - uses SQLite instead of Postgres
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: donna-backend-local
+    environment:
+      # Use SQLite for local dev
+      DATABASE_URL: sqlite+aiosqlite:///./agent.db
+      
+      # Server
+      SECRET_KEY: dev-secret-key-change-in-production
+      ENCRYPTION_KEY: dev-encryption-key-32-bytes-long
+      BASE_URL: http://localhost:8000
+      ENV: development
+      
+      # JWT
+      JWT_SECRET: dev-secret-key-change-in-production
+      JWT_ALGORITHM: HS256
+      
+      # Load from .env file
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:8000/auth/google/callback}
+      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID}
+      MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET}
+      MICROSOFT_REDIRECT_URI: ${MICROSOFT_REDIRECT_URI:-http://localhost:8000/auth/microsoft/callback}
+      SLACK_CLIENT_ID: ${SLACK_CLIENT_ID}
+      SLACK_CLIENT_SECRET: ${SLACK_CLIENT_SECRET}
+      SLACK_REDIRECT_URI: ${SLACK_REDIRECT_URI:-http://localhost:8000/auth/slack/callback}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../backend:/app
+      - ../backend/.env:/app/.env:ro
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+

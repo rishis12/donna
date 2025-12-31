@@ -15,6 +15,7 @@ interface User {
   email: string;
   googleConnected: boolean;
   microsoftConnected: boolean;
+  slackConnected: boolean;
 }
 
 interface CalendarEvent {
@@ -25,22 +26,45 @@ interface CalendarEvent {
   attendees?: string[];
 }
 
+interface TodoItem {
+  id: string;
+  text: string;
+  completed: boolean;
+  createdAt: Date;
+}
+
+interface DailyDigest {
+  meetings: CalendarEvent[];
+  reminders: { id: string; text: string; dueTime: string }[];
+  unreadEmails: number;
+}
+
 interface AppState {
   isAuthenticated: boolean;
   isLoading: boolean;
   user: User | null;
   messages: Message[];
   events: CalendarEvent[];
+  todos: TodoItem[];
+  dailyDigest: DailyDigest | null;
 
   // Actions
   init: () => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string) => Promise<void>;
+  loginWithToken: (token: string) => Promise<void>;
+  refreshUser: () => Promise<void>;
   logout: () => void;
   sendMessage: (text: string) => Promise<void>;
   confirmAction: (actionId: string, confirmed: boolean) => Promise<void>;
   fetchEvents: () => Promise<void>;
   clearHistory: () => Promise<void>;
+  // Todo actions
+  addTodo: (text: string) => void;
+  toggleTodo: (id: string) => void;
+  removeTodo: (id: string) => void;
+  // Daily digest
+  fetchDailyDigest: () => Promise<void>;
 }
 
 const createGreeting = (): Message => ({
@@ -56,6 +80,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   user: null,
   messages: [],
   events: [],
+  todos: [],
+  dailyDigest: null,
 
   init: async () => {
     try {
@@ -68,6 +94,7 @@ export const useAppStore = create<AppState>((set, get) => ({
             email: user.email,
             googleConnected: user.google_connected,
             microsoftConnected: user.microsoft_connected,
+            slackConnected: user.slack_connected,
           },
           messages: [createGreeting()],
           isLoading: false,
@@ -101,9 +128,43 @@ export const useAppStore = create<AppState>((set, get) => ({
     api.setToken(response.access_token);
     set({
       isAuthenticated: true,
-      user: { email, googleConnected: false, microsoftConnected: false },
+      user: { email, googleConnected: false, microsoftConnected: false, slackConnected: false },
       messages: [createGreeting()],
     });
+  },
+
+  loginWithToken: async (token) => {
+    api.setToken(token);
+    try {
+      const user = await api.get('/auth/me');
+      set({
+        isAuthenticated: true,
+        user: {
+          email: user.email,
+          googleConnected: user.google_connected,
+          microsoftConnected: user.microsoft_connected,
+        },
+        messages: [createGreeting()],
+      });
+    } catch (error) {
+      api.setToken(null);
+      throw error;
+    }
+  },
+
+  refreshUser: async () => {
+    try {
+      const user = await api.get('/auth/me');
+      set({
+        user: {
+          email: user.email,
+          googleConnected: user.google_connected,
+          microsoftConnected: user.microsoft_connected,
+        },
+      });
+    } catch (error) {
+      console.error('Failed to refresh user:', error);
+    }
   },
 
   logout: () => {
@@ -113,6 +174,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       user: null,
       messages: [],
       events: [],
+      todos: [],
+      dailyDigest: null,
     });
   },
 
@@ -167,7 +230,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   confirmAction: async (actionId, confirmed) => {
     try {
       const result = await api.post('/action/confirm', { action_id: actionId, confirmed });
-      const { messages } = get();
+      const { messages, fetchDailyDigest } = get();
+
+      // Check if this was a reminder creation action
+      const actionMessage = messages.find(msg => msg.actionId === actionId);
+      const wasReminderAction = actionMessage?.intent === 'create_reminder';
 
       const updatedMessages = messages.map((msg) =>
         msg.actionId === actionId ? { ...msg, requiresConfirmation: false, actionId: undefined } : msg
@@ -185,6 +252,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       };
 
       set({ messages: [...updatedMessages, resultMessage].slice(-20) });
+
+      // Refresh digest if a reminder was created
+      if (confirmed && wasReminderAction && result.status === 'executed') {
+        setTimeout(() => {
+          fetchDailyDigest();
+        }, 500);
+      }
     } catch (error: any) {
       console.error('Confirm action failed:', error);
     }
@@ -192,7 +266,8 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   fetchEvents: async () => {
     try {
-      const response = await api.get('/calendar/events');
+      // Fetch a week's worth of events
+      const response = await api.get('/calendar/events?max_results=50');
       set({ events: response.events || [] });
     } catch (error) {
       console.log('Failed to fetch events:', error);
@@ -207,6 +282,37 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     set({ messages: [createGreeting()] });
   },
+
+  // Todo actions - stored locally
+  addTodo: (text) => {
+    const { todos } = get();
+    const newTodo: TodoItem = {
+      id: Date.now().toString(),
+      text,
+      completed: false,
+      createdAt: new Date(),
+    };
+    set({ todos: [...todos, newTodo] });
+  },
+
+  toggleTodo: (id) => {
+    const { todos } = get();
+    set({
+      todos: todos.map((t) => (t.id === id ? { ...t, completed: !t.completed } : t)),
+    });
+  },
+
+  removeTodo: (id) => {
+    const { todos } = get();
+    set({ todos: todos.filter((t) => t.id !== id) });
+  },
+
+  fetchDailyDigest: async () => {
+    try {
+      const response = await api.get('/digest/daily');
+      set({ dailyDigest: response });
+    } catch (error) {
+      console.log('Failed to fetch daily digest:', error);
+    }
+  },
 }));
-
-

@@ -1,16 +1,29 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   FlatList,
-  TouchableOpacity,
   ActivityIndicator,
   RefreshControl,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAppStore } from '../../stores/appStore';
-import { useState } from 'react';
+
+// Earthy tan/brown colors
+const colors = {
+  background: '#FAF8F5',
+  surface: '#FFFFFF',
+  surfaceAlt: '#F5F0E8',
+  primary: '#B89460',
+  primaryLight: '#F7F3EE',
+  text: '#443D35',
+  textMuted: '#9C8B78',
+  textLight: '#B8A690',
+  border: '#E8DFD3',
+  success: '#8B9A6F',
+};
 
 export default function ScheduleScreen() {
   const { events, fetchEvents, user } = useAppStore();
@@ -75,7 +88,6 @@ export default function ScheduleScreen() {
     return `${mins}m`;
   };
 
-  // Group events by day
   const groupedEvents = events.reduce((acc, event) => {
     const day = new Date(event.start).toDateString();
     if (!acc[day]) acc[day] = [];
@@ -90,7 +102,9 @@ export default function ScheduleScreen() {
   if (!user?.googleConnected) {
     return (
       <View style={styles.emptyContainer}>
-        <Ionicons name="calendar-outline" size={64} color="#333" />
+        <View style={styles.emptyIcon}>
+          <Text style={styles.emptyEmoji}>📅</Text>
+        </View>
         <Text style={styles.emptyTitle}>Connect Your Calendar</Text>
         <Text style={styles.emptyText}>
           Connect your Google Calendar in Settings to see your schedule here.
@@ -102,7 +116,8 @@ export default function ScheduleScreen() {
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#f59e0b" />
+        <ActivityIndicator size="large" color={colors.primary} />
+        <Text style={styles.loadingText}>Loading schedule...</Text>
       </View>
     );
   }
@@ -116,15 +131,19 @@ export default function ScheduleScreen() {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
-            tintColor="#f59e0b"
+            tintColor={colors.primary}
+            colors={[colors.primary]}
           />
         }
+        contentContainerStyle={styles.listContent}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
-            <Ionicons name="calendar-outline" size={64} color="#333" />
-            <Text style={styles.emptyTitle}>No Upcoming Events</Text>
+            <View style={styles.emptyIcon}>
+              <Text style={styles.emptyEmoji}>☕</Text>
+            </View>
+            <Text style={styles.emptyTitle}>All Clear!</Text>
             <Text style={styles.emptyText}>
-              Ask Donna to schedule something for you!
+              No upcoming events. Ask Donna to schedule something!
             </Text>
           </View>
         }
@@ -144,13 +163,18 @@ export default function ScheduleScreen() {
               >
                 {getRelativeDay(groupedEvents[day][0].start)}
               </Text>
+              {isToday(groupedEvents[day][0].start) && (
+                <View style={styles.todayBadge}>
+                  <Text style={styles.todayBadgeText}>Today</Text>
+                </View>
+              )}
             </View>
 
             {groupedEvents[day].map((event) => (
               <View key={event.id} style={styles.eventCard}>
-                <View style={styles.timeColumn}>
+                <View style={styles.eventTime}>
                   <Text style={styles.startTime}>{formatTime(event.start)}</Text>
-                  <View style={styles.timeLine} />
+                  <View style={styles.timeDivider} />
                   <Text style={styles.endTime}>{formatTime(event.end)}</Text>
                 </View>
 
@@ -158,22 +182,21 @@ export default function ScheduleScreen() {
                   <Text style={styles.eventTitle} numberOfLines={2}>
                     {event.summary || 'Untitled Event'}
                   </Text>
-                  {event.attendees && event.attendees.length > 0 && (
-                    <View style={styles.attendeesRow}>
-                      <Ionicons name="people" size={12} color="#888" />
-                      <Text style={styles.attendeesText}>
-                        {event.attendees.length} attendee
-                        {event.attendees.length > 1 ? 's' : ''}
-                      </Text>
-                    </View>
-                  )}
-                </View>
-
-                <View style={styles.durationBadge}>
-                  <Ionicons name="time-outline" size={12} color="#666" />
-                  <Text style={styles.durationText}>
-                    {getDuration(event.start, event.end)}
-                  </Text>
+                  <View style={styles.eventMeta}>
+                    <Ionicons name="time-outline" size={14} color={colors.textMuted} />
+                    <Text style={styles.eventDuration}>
+                      {getDuration(event.start, event.end)}
+                    </Text>
+                    {event.attendees && event.attendees.length > 0 && (
+                      <>
+                        <View style={styles.metaDot} />
+                        <Ionicons name="people-outline" size={14} color={colors.textMuted} />
+                        <Text style={styles.eventAttendees}>
+                          {event.attendees.length}
+                        </Text>
+                      </>
+                    )}
+                  </View>
                 </View>
               </View>
             ))}
@@ -187,116 +210,145 @@ export default function ScheduleScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0a0a0f',
+    backgroundColor: colors.background,
+  },
+  listContent: {
+    padding: 16,
+    paddingBottom: 40,
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#0a0a0f',
+    backgroundColor: colors.background,
+    gap: 12,
+  },
+  loadingText: {
+    color: colors.textMuted,
+    fontSize: 14,
   },
   emptyContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 32,
-    marginTop: 100,
+    padding: 40,
+    marginTop: 60,
+  },
+  emptyIcon: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: colors.primaryLight,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  emptyEmoji: {
+    fontSize: 36,
   },
   emptyTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: '600',
-    color: '#888',
-    marginTop: 16,
+    color: colors.text,
+    marginBottom: 8,
+    fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
   },
   emptyText: {
-    fontSize: 14,
-    color: '#666',
+    fontSize: 15,
+    color: colors.textMuted,
     textAlign: 'center',
-    marginTop: 8,
+    lineHeight: 22,
   },
   daySection: {
-    marginBottom: 16,
+    marginBottom: 20,
   },
   dayHeader: {
-    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingVertical: 8,
+    marginBottom: 8,
   },
-  dayHeaderToday: {
-    backgroundColor: 'rgba(245, 158, 11, 0.1)',
-  },
+  dayHeaderToday: {},
   dayText: {
-    fontSize: 13,
+    fontSize: 16,
     fontWeight: '600',
-    color: '#888',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    color: colors.text,
+    fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
   },
   dayTextToday: {
-    color: '#f59e0b',
+    color: colors.primary,
+  },
+  todayBadge: {
+    backgroundColor: colors.primaryLight,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginLeft: 10,
+  },
+  todayBadgeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.primary,
   },
   eventCard: {
     flexDirection: 'row',
-    marginHorizontal: 16,
-    marginTop: 8,
-    padding: 12,
-    backgroundColor: '#1a1a24',
-    borderRadius: 12,
+    backgroundColor: colors.surface,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 10,
     borderWidth: 1,
-    borderColor: '#2a2a3a',
+    borderColor: colors.border,
   },
-  timeColumn: {
+  eventTime: {
     alignItems: 'center',
-    marginRight: 12,
-    minWidth: 50,
+    marginRight: 16,
+    minWidth: 60,
   },
   startTime: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '600',
-    color: '#f59e0b',
+    color: colors.primary,
   },
-  timeLine: {
+  timeDivider: {
     width: 1,
-    height: 12,
-    backgroundColor: '#2a2a3a',
+    height: 16,
+    backgroundColor: colors.border,
     marginVertical: 4,
   },
   endTime: {
-    fontSize: 11,
-    color: '#666',
+    fontSize: 12,
+    color: colors.textMuted,
   },
   eventContent: {
     flex: 1,
     justifyContent: 'center',
   },
   eventTitle: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '500',
-    color: '#e5e5e5',
+    color: colors.text,
+    marginBottom: 6,
   },
-  attendeesRow: {
+  eventMeta: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    marginTop: 4,
   },
-  attendeesText: {
-    fontSize: 12,
-    color: '#888',
+  eventDuration: {
+    fontSize: 13,
+    color: colors.textMuted,
+    marginLeft: 2,
   },
-  durationBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    backgroundColor: '#0a0a0f',
-    borderRadius: 8,
-    alignSelf: 'flex-start',
+  metaDot: {
+    width: 3,
+    height: 3,
+    borderRadius: 1.5,
+    backgroundColor: colors.textMuted,
+    marginHorizontal: 6,
   },
-  durationText: {
-    fontSize: 11,
-    color: '#666',
+  eventAttendees: {
+    fontSize: 13,
+    color: colors.textMuted,
+    marginLeft: 2,
   },
 });
-
-

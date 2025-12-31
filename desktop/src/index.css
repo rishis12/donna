@@ -3,17 +3,47 @@
 @tailwind utilities;
 
 :root {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: Georgia, Cambria, 'Times New Roman', serif;
   font-size: 14px;
-  line-height: 1.5;
+  line-height: 1.6;
   font-weight: 400;
-  color: #e2e8f0;
-  background-color: #0f172a;
+  color: #443D35;
+  background-color: #FAF8F5;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   -webkit-text-size-adjust: 100%;
+
+  /* Claude Chat Input Theme Variables - Light Mode */
+  --bg-0: #FAF9F5;
+  --bg-000: #FAF9F5;
+  --bg-100: #FFFFFF;
+  --bg-200: #F0EEE6;
+  --bg-300: #DDDDDD;
+  --text-100: #1F1E1D;
+  --text-200: #3D3D3A;
+  --text-300: #73726C;
+  --text-400: #888888;
+  --text-500: #999999;
+  --accent: #D97757;
+  --accent-hover: #C6613F;
+}
+
+.dark {
+  /* Claude Chat Input Theme Variables - Dark Mode */
+  --bg-0: #212121;
+  --bg-000: #212121;
+  --bg-100: #262624;
+  --bg-200: #30302E;
+  --bg-300: #454540;
+  --text-100: #ECECEC;
+  --text-200: #E1E1E0;
+  --text-300: #B4B4B4;
+  --text-400: #8A8A88;
+  --text-500: #6B6B65;
+  --accent: #D2996E;
+  --accent-hover: #E5AA7F;
 }
 
 * {
@@ -32,28 +62,55 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: #1e293b;
+  background: #F5F0E8;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #475569;
+  background: #D4C4B0;
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #64748b;
+  background: #B8A690;
 }
 
-@keyframes glow {
-  0%, 100% {
-    box-shadow: 0 0 20px rgba(59, 130, 246, 0.3);
+/* Custom scrollbar for Claude Chat Input */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--bg-300) transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--bg-300);
+  border-radius: 3px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--text-400);
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+    filter: blur(4px);
   }
-  50% {
-    box-shadow: 0 0 40px rgba(59, 130, 246, 0.6);
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
   }
 }
 
-.glow-effect {
-  animation: glow 2s ease-in-out infinite;
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out;
 }
-

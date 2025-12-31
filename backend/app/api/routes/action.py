@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dateutil import parser as date_parser
 import uuid
 
@@ -11,37 +11,39 @@ from ...core.database import get_db
 from ...models.user import User
 from ...services import reminder_service
 from ...integrations import google_integration, microsoft_integration
+from ...integrations.slack_integration import slack_integration
+from ...models.messaging_account import MessagingAccount
+from sqlalchemy import select
+from typing import List
 
 router = APIRouter(prefix="/action", tags=["action"])
 
-# In-memory store for pending actions (in production, use Redis or DB)
+# In-memory storage for pending actions (in production, use Redis or database)
 pending_actions: Dict[str, Dict[str, Any]] = {}
 
-
 def store_pending_action(action_id: str, user_id: str, intent: str, entities: dict, actions: list = None):
-    """Store a pending action (or multiple actions) that requires confirmation."""
+    """Store a pending action that requires user confirmation."""
     pending_actions[action_id] = {
-        "user_id": str(user_id),
+        "user_id": user_id,
         "intent": intent,
         "entities": entities,
         "actions": actions,  # For multi-action support
-        "created_at": datetime.utcnow(),
-        "expires_at": datetime.utcnow() + timedelta(minutes=5)
+        "created_at": datetime.now(timezone.utc)
     }
 
-
 def get_pending_action(action_id: str, user_id: str) -> dict | None:
-    """Retrieve a pending action if it exists and belongs to the user."""
+    """Get a pending action by ID, checking user ownership."""
     action = pending_actions.get(action_id)
     if not action:
         return None
-    if action["user_id"] != str(user_id):
+    # Check user ownership
+    if action.get("user_id") != str(user_id):
         return None
-    if datetime.utcnow() > action["expires_at"]:
+    # Check if expired (older than 1 hour)
+    if (datetime.now(timezone.utc) - action["created_at"]).total_seconds() > 3600:
         del pending_actions[action_id]
         return None
     return action
-
 
 @router.post("/confirm")
 async def confirm_action(
@@ -105,6 +107,12 @@ async def execute_single_action(db: AsyncSession, user: User, intent: str, entit
         return await execute_draft_email(user, entities)
     elif intent == "send_email":
         return await execute_send_email(user, entities)
+    elif intent == "mark_emails_read":
+        return await execute_mark_emails_read(user, entities)
+    elif intent == "delete_emails":
+        return await execute_delete_emails(user, entities)
+    elif intent == "send_slack_message":
+        return await execute_send_slack_message(db, user, entities)
     else:
         raise Exception(f"Unknown intent: {intent}")
 
@@ -124,9 +132,19 @@ async def execute_create_reminder(db: AsyncSession, user: User, entities: dict) 
     except Exception as e:
         raise Exception(f"Could not parse time '{time_str}'. Please specify a valid date and time.")
     
-    reminder = await reminder_service.create_reminder(db, user.id, text, due_time)
+    # Validate time is in the future
+    if due_time <= datetime.now(due_time.tzinfo) if due_time.tzinfo else datetime.now(timezone.utc):
+        raise Exception("Reminder time must be in the future. Please specify a future time.")
+    
+    reminder = await reminder_service.create_reminder(
+        db,
+        user.id,
+        text,
+        due_time
+    )
+    
     return {
-        "id": str(reminder.id),
+        "reminder_id": str(reminder.id),
         "text": reminder.text,
         "due_time": reminder.due_time.isoformat()
     }
@@ -190,24 +208,23 @@ async def execute_move_event(user: User, entities: dict) -> dict:
     try:
         new_time = date_parser.parse(new_time_str)
     except Exception as e:
-        raise Exception(f"Could not parse the new time '{new_time_str}'. Please specify a valid date and time.")
+        raise Exception(f"Could not parse time '{new_time_str}'. Please specify a valid date and time.")
     
-    # Get the original event to preserve its duration
+    # Get the original event to preserve duration
     try:
-        from ...integrations import google_integration as gi
-        creds = gi.get_credentials(user.google_access_token, user.google_refresh_token)
+        creds = google_integration.get_credentials(user.google_access_token, user.google_refresh_token)
         from googleapiclient.discovery import build
         service = build("calendar", "v3", credentials=creds)
-        original_event = service.events().get(calendarId="primary", eventId=event_id).execute()
+        orig_event = service.events().get(calendarId="primary", eventId=event_id).execute()
         
-        # Calculate original duration
-        orig_start = original_event.get('start', {}).get('dateTime')
-        orig_end = original_event.get('end', {}).get('dateTime')
-        if orig_start and orig_end:
+        orig_start = orig_event.get("start", {}).get("dateTime", orig_event.get("start", {}).get("date", ""))
+        orig_end = orig_event.get("end", {}).get("dateTime", orig_event.get("end", {}).get("date", ""))
+        
+        try:
             orig_start_dt = date_parser.parse(orig_start)
             orig_end_dt = date_parser.parse(orig_end)
             duration = orig_end_dt - orig_start_dt
-        else:
+        except:
             duration = timedelta(minutes=entities.get("duration_minutes", 30))
     except Exception as e:
         duration = timedelta(minutes=entities.get("duration_minutes", 30))
@@ -316,14 +333,22 @@ async def execute_cancel_event(user: User, entities: dict) -> dict:
 
 
 async def execute_draft_email(user: User, entities: dict) -> dict:
-    """Create an email draft."""
+    """Create an email draft (NOT send it)."""
     if not user.google_access_token:
         raise Exception("Gmail not connected")
     
-    to = entities.get("attendees", [entities.get("to", "")])[0] if isinstance(entities.get("attendees"), list) else entities.get("to", "")
-    subject = entities.get("subject", "")
-    body = entities.get("body", "")
+    # Try multiple possible entity names for recipient
+    to = (entities.get("to") or 
+          entities.get("recipient") or 
+          entities.get("email") or
+          (entities.get("attendees", [""])[0] if isinstance(entities.get("attendees"), list) and entities.get("attendees") else ""))
+    subject = entities.get("subject", "No subject")
+    body = entities.get("body") or entities.get("email_body") or entities.get("message") or ""
     
+    if not to:
+        raise Exception("Email recipient is required")
+    
+    # Create draft in Gmail (this does NOT send it)
     draft = await google_integration.create_draft(
         user.google_access_token,
         user.google_refresh_token,
@@ -331,7 +356,14 @@ async def execute_draft_email(user: User, entities: dict) -> dict:
         subject,
         body
     )
-    return {"draft_id": draft.get("id"), "status": "drafted"}
+    return {
+        "draft_id": draft.get("id"),
+        "status": "drafted",
+        "to": to,
+        "subject": subject,
+        "body": body,  # Include body in response for email sending
+        "message": f"Draft created! Check your Gmail drafts folder. To: {to}, Subject: {subject}"
+    }
 
 
 async def execute_send_email(user: User, entities: dict) -> dict:
@@ -339,9 +371,13 @@ async def execute_send_email(user: User, entities: dict) -> dict:
     if not user.google_access_token:
         raise Exception("Gmail not connected")
     
-    to = entities.get("attendees", [entities.get("to", "")])[0] if isinstance(entities.get("attendees"), list) else entities.get("to", "")
+    # Try multiple possible entity names for recipient
+    to = (entities.get("to") or 
+          entities.get("recipient") or 
+          entities.get("email") or
+          (entities.get("attendees", [""])[0] if isinstance(entities.get("attendees"), list) and entities.get("attendees") else ""))
     subject = entities.get("subject", "")
-    body = entities.get("body", "")
+    body = entities.get("body") or entities.get("email_body") or entities.get("message") or ""
     
     result = await google_integration.send_email(
         user.google_access_token,
@@ -351,4 +387,147 @@ async def execute_send_email(user: User, entities: dict) -> dict:
         body
     )
     return {"message_id": result.get("id"), "status": "sent"}
+
+
+async def execute_mark_emails_read(user: User, entities: dict) -> dict:
+    """Mark emails as read."""
+    if not user.google_access_token:
+        raise Exception("Gmail not connected")
+    
+    mark_all = entities.get("mark_all", False) or entities.get("all", False)
+    email_ids = entities.get("email_ids", [])
+    
+    result = await google_integration.mark_emails_as_read(
+        user.google_access_token,
+        user.google_refresh_token,
+        email_ids if not mark_all else None,
+        mark_all=mark_all
+    )
+    
+    return {
+        "status": result.get("status"),
+        "count": result.get("count", 0),
+        "message": f"Marked {result.get('count', 0)} email{'s' if result.get('count', 0) != 1 else ''} as read."
+    }
+
+
+async def execute_delete_emails(user: User, entities: dict) -> dict:
+    """Delete emails from Gmail."""
+    if not user.google_access_token:
+        raise Exception("Gmail not connected")
+    
+    email_ids = entities.get("email_ids", [])
+    label = entities.get("label")
+    subject_search = entities.get("subject_search")
+    delete_count = entities.get("delete_count")
+    permanent = entities.get("permanent", False)
+    
+    result = await google_integration.delete_emails(
+        user.google_access_token,
+        user.google_refresh_token,
+        email_ids if email_ids else None,
+        label=label,
+        subject_search=subject_search,
+        delete_count=delete_count,
+        permanent=permanent
+    )
+    
+    action = result.get("action", "deleted")
+    count = result.get("count", 0)
+    return {
+        "status": result.get("status"),
+        "count": count,
+        "message": f"{action.capitalize()} {count} email{'s' if count != 1 else ''}."
+    }
+
+
+async def execute_send_slack_message(db: AsyncSession, user: User, entities: dict) -> dict:
+    """Send a message to a Slack channel."""
+    # Get message content
+    message = entities.get("message") or entities.get("slack_message") or entities.get("body")
+    if not message:
+        raise Exception("Message content is required. What would you like to send to Slack?")
+    
+    # Get channel - can be channel name (#channel-name) or channel ID
+    channel = entities.get("channel") or entities.get("channel_id")
+    if not channel:
+        raise Exception("Slack channel is required. Which channel should I send the message to? (e.g., #general)")
+    
+    # Remove # if present (Slack API accepts both formats)
+    if channel.startswith("#"):
+        channel = channel[1:]
+    
+    # Get user's Slack messaging account
+    result = await db.execute(
+        select(MessagingAccount)
+        .where(MessagingAccount.user_id == user.id)
+        .where(MessagingAccount.platform == "slack")
+        .where(MessagingAccount.is_active == True)
+    )
+    account = result.scalar_one_or_none()
+    
+    if not account:
+        raise Exception("Slack is not connected. Please connect your Slack workspace in Settings.")
+    
+    # Get bot token (from account or settings)
+    from ...core.config import get_settings
+    from ...core.security import decrypt_token
+    settings = get_settings()
+    
+    bot_token = None
+    if account.bot_token:
+        try:
+            bot_token = decrypt_token(account.bot_token)
+        except:
+            pass
+    
+    # Fallback to settings token if account token unavailable
+    if not bot_token:
+        bot_token = settings.slack_bot_token
+    
+    if not bot_token:
+        raise Exception("Slack bot token not configured. Please set up your Slack integration.")
+    
+    # Try to resolve channel name to ID if it's not already an ID
+    # Channel IDs in Slack start with 'C' (public), 'G' (private), 'D' (DM), 'M' (multiparty DM)
+    channel_id = channel
+    if not (channel.startswith('C') or channel.startswith('G') or channel.startswith('D') or channel.startswith('M')):
+        # It's a channel name, try to resolve it
+        # For now, we'll try using the name directly (Slack API accepts channel names)
+        # In production, you might want to cache channel name -> ID mappings
+        channel_id = channel
+    
+    # Send the message
+    try:
+        response = await slack_integration.send_message(
+            bot_token,
+            channel_id,
+            message
+        )
+        
+        # Check if message was sent successfully
+        if response.get("ok"):
+            return {
+                "status": "sent",
+                "channel": channel,
+                "message": message,
+                "ts": response.get("ts"),  # Message timestamp
+                "response": f"Message sent to #{channel if not channel.startswith(('C', 'G', 'D', 'M')) else 'channel'}"
+            }
+        else:
+            error = response.get("error", "Unknown error")
+            raise Exception(f"Failed to send Slack message: {error}")
+            
+    except Exception as e:
+        # Provide helpful error messages
+        error_msg = str(e)
+        if "channel_not_found" in error_msg or "not_in_channel" in error_msg:
+            raise Exception(f"Channel '{channel}' not found or bot is not a member. Please invite the bot to the channel or check the channel name.")
+        elif "invalid_auth" in error_msg or "account_inactive" in error_msg:
+            raise Exception("Slack authentication failed. Please reconnect your Slack account.")
+        else:
+            raise Exception(f"Failed to send Slack message: {error_msg}")
+
+    
+
 

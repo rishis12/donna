@@ -3,6 +3,8 @@ from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from datetime import datetime, timedelta
 from typing import Optional, List
+import base64
+import re
 from ..core.config import get_settings
 from ..core.security import encrypt_token, decrypt_token
 
@@ -13,8 +15,7 @@ SCOPES = [
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile",
     "https://www.googleapis.com/auth/calendar",
-    "https://www.googleapis.com/auth/gmail.send",
-    "https://www.googleapis.com/auth/gmail.compose"
+    "https://www.googleapis.com/auth/gmail.modify"  # Read, compose, and send emails from your Gmail account
 ]
 
 def get_auth_flow() -> Flow:
@@ -223,4 +224,217 @@ async def create_draft(
     
     raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
     return service.users().drafts().create(userId="me", body={"message": {"raw": raw}}).execute()
+
+# Gmail email reading functions
+def extract_email_body(payload: dict) -> str:
+    """Extract email body text from Gmail message payload."""
+    body = ""
+    
+    if 'parts' in payload:
+        for part in payload['parts']:
+            mime_type = part.get('mimeType', '')
+            body_data = part.get('body', {}).get('data', '')
+            
+            if mime_type == 'text/plain' and body_data:
+                try:
+                    body += base64.urlsafe_b64decode(body_data).decode('utf-8', errors='ignore')
+                except:
+                    pass
+            elif mime_type == 'text/html' and body_data and not body:
+                try:
+                    html_body = base64.urlsafe_b64decode(body_data).decode('utf-8', errors='ignore')
+                    # Simple HTML tag removal for plain text preview
+                    body = re.sub('<[^<]+?>', '', html_body)
+                except:
+                    pass
+    elif payload.get('mimeType') == 'text/plain' and payload.get('body', {}).get('data'):
+        try:
+            body = base64.urlsafe_b64decode(payload['body']['data']).decode('utf-8', errors='ignore')
+        except:
+            pass
+    
+    return body[:500]  # Limit to 500 chars for preview
+
+async def list_emails(
+    access_token: str,
+    refresh_token: str,
+    max_results: int = 20,
+    unread_only: bool = False
+) -> List[dict]:
+    """
+    Fetch emails from Gmail.
+    """
+    creds = get_credentials(access_token, refresh_token)
+    service = build("gmail", "v1", credentials=creds)
+    
+    query = "is:unread" if unread_only else ""
+    results = service.users().messages().list(
+        userId="me",
+        q=query,
+        maxResults=max_results
+    ).execute()
+    
+    messages = results.get("messages", [])
+    emails = []
+    
+    for msg in messages:
+        try:
+            message = service.users().messages().get(userId="me", id=msg["id"], format='full').execute()
+            payload = message.get("payload", {})
+            headers = payload.get("headers", [])
+            
+            email_data = {
+                "id": msg["id"],
+                "subject": next((h["value"] for h in headers if h["name"] == "Subject"), ""),
+                "from": next((h["value"] for h in headers if h["name"] == "From"), ""),
+                "date": next((h["value"] for h in headers if h["name"] == "Date"), ""),
+                "snippet": message.get("snippet", ""),
+                "body": extract_email_body(payload),
+                "unread": "UNREAD" in message.get("labelIds", [])
+            }
+            emails.append(email_data)
+        except Exception as e:
+            print(f"Error fetching email {msg.get('id')}: {e}")
+            continue
+    
+    return emails
+
+async def get_email_count(access_token: str, refresh_token: str, unread_only: bool = False) -> int:
+    """
+    Get count of emails (unread or total).
+    """
+    creds = get_credentials(access_token, refresh_token)
+    service = build("gmail", "v1", credentials=creds)
+    
+    query = "is:unread" if unread_only else ""
+    results = service.users().messages().list(
+        userId="me",
+        q=query,
+        maxResults=1
+    ).execute()
+    
+    return results.get("resultSizeEstimate", 0)
+
+async def mark_emails_as_read(
+    access_token: str,
+    refresh_token: str,
+    email_ids: List[str] = None,
+    mark_all: bool = False
+) -> dict:
+    """
+    Mark emails as read in Gmail.
+    If email_ids is provided, mark only those emails.
+    If mark_all is True, mark all unread emails as read.
+    """
+    creds = get_credentials(access_token, refresh_token)
+    service = build("gmail", "v1", credentials=creds)
+    
+    if mark_all:
+        # Get all unread email IDs
+        results = service.users().messages().list(
+            userId="me",
+            q="is:unread",
+            maxResults=500  # Gmail API limit
+        ).execute()
+        email_ids = [msg["id"] for msg in results.get("messages", [])]
+    
+    if not email_ids:
+        return {"status": "no_emails", "count": 0}
+    
+    # Mark each email as read (remove UNREAD label)
+    marked_count = 0
+    for email_id in email_ids:
+        try:
+            service.users().messages().modify(
+                userId="me",
+                id=email_id,
+                body={"removeLabelIds": ["UNREAD"]}
+            ).execute()
+            marked_count += 1
+        except Exception as e:
+            print(f"Error marking email {email_id} as read: {e}")
+            continue
+    
+    return {"status": "marked_read", "count": marked_count}
+
+async def delete_emails(
+    access_token: str,
+    refresh_token: str,
+    email_ids: List[str] = None,
+    label: str = None,
+    subject_search: str = None,
+    delete_count: int = None,
+    permanent: bool = False
+) -> dict:
+    """
+    Delete emails in Gmail.
+    If email_ids is provided, delete those specific emails.
+    If label is provided, delete emails from that label (e.g., "Promotions" or "category_promotions").
+    If subject_search is provided, delete emails matching that subject.
+    If delete_count is provided, limit to that many emails.
+    If permanent is True, permanently delete (defaults to False, which moves to trash).
+    """
+    creds = get_credentials(access_token, refresh_token)
+    service = build("gmail", "v1", credentials=creds)
+    
+    # If no email_ids provided, search for emails to delete
+    if not email_ids:
+        query_parts = []
+        
+        # Build search query
+        if label:
+            # Convert common label names to Gmail label format
+            label_map = {
+                "promotions": "category_promotions",
+                "promotion": "category_promotions",
+                "social": "category_social",
+                "updates": "category_updates",
+                "forums": "category_forums",
+            }
+            label_lower = label.lower()
+            gmail_label = label_map.get(label_lower, label)
+            # Handle category labels or regular labels
+            if gmail_label.startswith("category_"):
+                query_parts.append(f"in:{gmail_label}")
+            else:
+                query_parts.append(f"label:{gmail_label}")
+        
+        if subject_search:
+            query_parts.append(f'subject:"{subject_search}"')
+        
+        query = " ".join(query_parts) if query_parts else ""
+        
+        # Get messages matching the query
+        max_results = delete_count if delete_count else 500
+        results = service.users().messages().list(
+            userId="me",
+            q=query,
+            maxResults=max_results
+        ).execute()
+        
+        email_ids = [msg["id"] for msg in results.get("messages", [])]
+    
+    if not email_ids:
+        return {"status": "no_emails", "count": 0}
+    
+    # Limit to delete_count if specified
+    if delete_count and len(email_ids) > delete_count:
+        email_ids = email_ids[:delete_count]
+    
+    # Delete each email (trash or permanent delete)
+    deleted_count = 0
+    for email_id in email_ids:
+        try:
+            if permanent:
+                service.users().messages().delete(userId="me", id=email_id).execute()
+            else:
+                service.users().messages().trash(userId="me", id=email_id).execute()
+            deleted_count += 1
+        except Exception as e:
+            print(f"Error deleting email {email_id}: {e}")
+            continue
+    
+    action = "permanently deleted" if permanent else "moved to trash"
+    return {"status": "deleted", "count": deleted_count, "action": action}
+
 

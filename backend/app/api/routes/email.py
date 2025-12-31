@@ -54,3 +54,23 @@ async def send_email(
     
     return {"status": "sent", "result": result}
 
+@router.post("/mark-read")
+async def mark_emails_read(
+    data: dict,  # {"email_ids": ["id1", "id2"] or "all": true}
+    user: User = Depends(get_current_user)
+):
+    if not user.google_access_token:
+        raise HTTPException(status_code=400, detail="Gmail not connected")
+    
+    email_ids = data.get("email_ids", [])
+    mark_all = data.get("all", False)
+    
+    result = await google_integration.mark_emails_as_read(
+        user.google_access_token,
+        user.google_refresh_token,
+        email_ids if not mark_all else None,
+        mark_all=mark_all
+    )
+    
+    return result
+

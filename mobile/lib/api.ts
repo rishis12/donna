@@ -5,7 +5,7 @@ import Constants from 'expo-constants';
 // ===========================================
 // 🔧 CONFIGURATION - Update this to your PC's IP address
 // ===========================================
-const YOUR_PC_IP = '10.18.122.186'; // ← CHANGE THIS to your computer's IP (run 'ipconfig' to find it)
+const YOUR_PC_IP = '192.168.1.177'; // ← CHANGE THIS to your computer's IP (run 'ipconfig' to find it)
 // ===========================================
 
 // Auto-detect the correct API URL based on platform

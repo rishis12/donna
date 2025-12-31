@@ -1,23 +1,26 @@
 import { useEffect, useRef } from 'react'
 import CommandWindow from './components/CommandWindow'
 import LoginForm from './components/LoginForm'
+import MiniWidget from './components/MiniWidget'
 import { useAppStore } from './stores/appStore'
 
 function App() {
-  const { isAuthenticated, checkAuth, pollDueReminders } = useAppStore()
+  const { isAuthenticated, checkAuth, pollDueReminders, isMiniMode } = useAppStore()
   const pollIntervalRef = useRef<number | null>(null)
 
   useEffect(() => {
     checkAuth()
   }, [checkAuth])
 
-  // Start polling for due reminders when authenticated
   useEffect(() => {
     if (isAuthenticated) {
-      // Poll immediately
+      const { pollDueReminders, pollUpcomingMeetings } = useAppStore.getState()
       pollDueReminders()
-      // Then poll every 30 seconds
-      pollIntervalRef.current = window.setInterval(pollDueReminders, 30000)
+      pollUpcomingMeetings()
+      pollIntervalRef.current = window.setInterval(() => {
+        pollDueReminders()
+        pollUpcomingMeetings()
+      }, 30000) // Poll every 30 seconds
     }
     
     return () => {
@@ -25,27 +28,24 @@ function App() {
         clearInterval(pollIntervalRef.current)
       }
     }
-  }, [isAuthenticated, pollDueReminders])
+  }, [isAuthenticated])
+
+  // Mini mode - compact floating widget that fills the small window
+  if (isAuthenticated && isMiniMode) {
+    return <MiniWidget />
+  }
 
   return (
-    <div className="min-h-screen bg-surface-950 relative overflow-hidden">
-      {/* Background gradient */}
-      <div className="absolute inset-0 bg-gradient-to-br from-surface-900 via-surface-950 to-black" />
+    <div className="min-h-screen bg-surface-50 relative overflow-hidden">
+      {/* Subtle warm gradient background */}
+      <div className="absolute inset-0 bg-gradient-to-br from-surface-50 via-primary-50/20 to-surface-100" />
       
-      {/* Subtle grid pattern */}
-      <div 
-        className="absolute inset-0 opacity-[0.02]"
-        style={{
-          backgroundImage: `
-            linear-gradient(rgba(59, 130, 246, 0.5) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(59, 130, 246, 0.5) 1px, transparent 1px)
-          `,
-          backgroundSize: '50px 50px'
-        }}
-      />
+      {/* Soft decorative shapes */}
+      <div className="absolute top-0 right-0 w-80 h-80 bg-primary-200/30 rounded-full blur-3xl -translate-y-1/3 translate-x-1/3" />
+      <div className="absolute bottom-0 left-0 w-64 h-64 bg-surface-300/40 rounded-full blur-3xl translate-y-1/3 -translate-x-1/3" />
       
       {/* Main content */}
-      <div className="relative z-10 flex items-center justify-center min-h-screen p-4">
+      <div className="relative z-10 flex items-center justify-center min-h-screen p-6">
         {isAuthenticated ? <CommandWindow /> : <LoginForm />}
       </div>
     </div>
@@ -53,4 +53,3 @@ function App() {
 }
 
 export default App
-

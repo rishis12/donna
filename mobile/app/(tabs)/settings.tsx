@@ -1,9 +1,36 @@
-import { View, Text, StyleSheet, TouchableOpacity, Alert, Linking } from 'react-native';
+import { useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator, ScrollView, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAppStore } from '../../stores/appStore';
+import * as WebBrowser from 'expo-web-browser';
+import { api } from '../../lib/api';
+
+WebBrowser.maybeCompleteAuthSession();
+
+// Earthy tan/brown colors
+const colors = {
+  background: '#FAF8F5',
+  surface: '#FFFFFF',
+  surfaceAlt: '#F5F0E8',
+  primary: '#B89460',
+  primaryLight: '#F7F3EE',
+  text: '#443D35',
+  textMuted: '#9C8B78',
+  border: '#E8DFD3',
+  success: '#8B9A6F',
+  successLight: '#EDF2E7',
+  error: '#B87060',
+  google: '#EA4335',
+  googleLight: '#FEE8E6',
+  microsoft: '#0078D4',
+  microsoftLight: '#E6F1FC',
+};
 
 export default function SettingsScreen() {
-  const { user, logout } = useAppStore();
+  const { user, logout, refreshUser } = useAppStore();
+  const [connectingGoogle, setConnectingGoogle] = useState(false);
+  const [connectingMicrosoft, setConnectingMicrosoft] = useState(false);
+  const [connectingSlack, setConnectingSlack] = useState(false);
 
   const handleLogout = () => {
     Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
@@ -12,78 +39,162 @@ export default function SettingsScreen() {
     ]);
   };
 
-  const handleConnectGoogle = () => {
-    // For mobile, we'd use OAuth with deep linking
-    // For now, show instructions
-    Alert.alert(
-      'Connect Google',
-      'To connect your Google account, please use the desktop app. Your account will sync across devices.',
-      [{ text: 'OK' }]
-    );
+  const handleConnectGoogle = async () => {
+    if (user?.googleConnected) {
+      Alert.alert('Already Connected', 'Your Google account is already connected.');
+      return;
+    }
+
+    setConnectingGoogle(true);
+    try {
+      const response = await api.get('/auth/google/connect');
+      const authUrl = response.auth_url;
+
+      if (!authUrl) {
+        throw new Error('Google OAuth is not configured');
+      }
+
+      await WebBrowser.openBrowserAsync(authUrl);
+      await refreshUser();
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to connect Google');
+    } finally {
+      setConnectingGoogle(false);
+    }
   };
 
-  const handleConnectMicrosoft = () => {
-    Alert.alert(
-      'Connect Microsoft',
-      'To connect your Microsoft account, please use the desktop app. Your account will sync across devices.',
-      [{ text: 'OK' }]
-    );
+  const handleConnectMicrosoft = async () => {
+    if (user?.microsoftConnected) {
+      Alert.alert('Already Connected', 'Your Microsoft account is already connected.');
+      return;
+    }
+
+    setConnectingMicrosoft(true);
+    try {
+      const response = await api.get('/auth/microsoft/connect');
+      const authUrl = response.auth_url;
+
+      if (!authUrl) {
+        throw new Error('Microsoft OAuth is not configured');
+      }
+
+      await WebBrowser.openBrowserAsync(authUrl);
+      await refreshUser();
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to connect Microsoft');
+    } finally {
+      setConnectingMicrosoft(false);
+    }
+  };
+
+  const handleConnectSlack = async () => {
+    if (user?.slackConnected) {
+      Alert.alert('Already Connected', 'Your Slack workspace is already connected.');
+      return;
+    }
+
+    setConnectingSlack(true);
+    try {
+      const response = await api.get('/auth/slack/connect');
+      const authUrl = response.auth_url;
+
+      if (!authUrl) {
+        throw new Error('Slack OAuth is not configured');
+      }
+
+      await WebBrowser.openBrowserAsync(authUrl);
+      await refreshUser();
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to connect Slack');
+    } finally {
+      setConnectingSlack(false);
+    }
   };
 
   return (
-    <View style={styles.container}>
-      {/* User Info */}
-      <View style={styles.section}>
-        <View style={styles.userCard}>
-          <View style={styles.avatar}>
-            <Ionicons name="person" size={32} color="#f59e0b" />
-          </View>
-          <View style={styles.userInfo}>
-            <Text style={styles.userEmail}>{user?.email}</Text>
-            <Text style={styles.userStatus}>Signed in</Text>
-          </View>
+    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      {/* Profile Card */}
+      <View style={styles.profileCard}>
+        <View style={styles.avatar}>
+          <Text style={styles.avatarEmoji}>☕</Text>
+        </View>
+        <Text style={styles.userEmail}>{user?.email}</Text>
+        <View style={styles.statusBadge}>
+          <View style={styles.statusDot} />
+          <Text style={styles.statusText}>Signed in</Text>
         </View>
       </View>
 
-      {/* Connections */}
+      {/* Connected Accounts */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Connected Accounts</Text>
-
-        <TouchableOpacity style={styles.connectionItem} onPress={handleConnectGoogle}>
-          <View style={styles.connectionLeft}>
-            <View style={[styles.connectionIcon, { backgroundColor: 'rgba(234, 67, 53, 0.15)' }]}>
-              <Ionicons name="logo-google" size={20} color="#EA4335" />
-            </View>
-            <View>
-              <Text style={styles.connectionName}>Google</Text>
-              <Text style={styles.connectionStatus}>
-                {user?.googleConnected ? 'Connected' : 'Not connected'}
-              </Text>
-            </View>
+        
+        <TouchableOpacity 
+          style={styles.connectionCard}
+          onPress={handleConnectGoogle}
+          disabled={connectingGoogle}
+        >
+          <View style={[styles.connectionIcon, { backgroundColor: colors.googleLight }]}>
+            <Ionicons name="logo-google" size={22} color={colors.google} />
           </View>
-          {user?.googleConnected ? (
-            <Ionicons name="checkmark-circle" size={24} color="#22c55e" />
+          <View style={styles.connectionInfo}>
+            <Text style={styles.connectionName}>Google</Text>
+            <Text style={styles.connectionStatus}>
+              {user?.googleConnected ? 'Calendar & Gmail connected' : 'Tap to connect'}
+            </Text>
+          </View>
+          {connectingGoogle ? (
+            <ActivityIndicator color={colors.google} />
+          ) : user?.googleConnected ? (
+            <Ionicons name="checkmark-circle" size={24} color={colors.success} />
           ) : (
-            <Ionicons name="add-circle-outline" size={24} color="#888" />
+            <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
           )}
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.connectionItem} onPress={handleConnectMicrosoft}>
-          <View style={styles.connectionLeft}>
-            <View style={[styles.connectionIcon, { backgroundColor: 'rgba(0, 120, 212, 0.15)' }]}>
-              <Ionicons name="logo-microsoft" size={20} color="#0078D4" />
-            </View>
-            <View>
-              <Text style={styles.connectionName}>Microsoft</Text>
-              <Text style={styles.connectionStatus}>
-                {user?.microsoftConnected ? 'Connected' : 'Not connected'}
-              </Text>
-            </View>
+        <TouchableOpacity 
+          style={styles.connectionCard}
+          onPress={handleConnectMicrosoft}
+          disabled={connectingMicrosoft}
+        >
+          <View style={[styles.connectionIcon, { backgroundColor: colors.microsoftLight }]}>
+            <Ionicons name="logo-microsoft" size={22} color={colors.microsoft} />
           </View>
-          {user?.microsoftConnected ? (
-            <Ionicons name="checkmark-circle" size={24} color="#22c55e" />
+          <View style={styles.connectionInfo}>
+            <Text style={styles.connectionName}>Microsoft</Text>
+            <Text style={styles.connectionStatus}>
+              {user?.microsoftConnected ? 'Outlook connected' : 'Tap to connect'}
+            </Text>
+          </View>
+          {connectingMicrosoft ? (
+            <ActivityIndicator color={colors.microsoft} />
+          ) : user?.microsoftConnected ? (
+            <Ionicons name="checkmark-circle" size={24} color={colors.success} />
           ) : (
-            <Ionicons name="add-circle-outline" size={24} color="#888" />
+            <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+          )}
+        </TouchableOpacity>
+
+        <TouchableOpacity 
+          style={styles.connectionCard}
+          onPress={handleConnectSlack}
+          disabled={connectingSlack}
+        >
+          <View style={[styles.connectionIcon, { backgroundColor: '#F4E5F7' }]}>
+            <Ionicons name="chatbubbles" size={22} color="#4A154B" />
+          </View>
+          <View style={styles.connectionInfo}>
+            <Text style={styles.connectionName}>Slack</Text>
+            <Text style={styles.connectionStatus}>
+              {user?.slackConnected ? 'Workspace connected' : 'Tap to connect'}
+            </Text>
+          </View>
+          {connectingSlack ? (
+            <ActivityIndicator color="#4A154B" />
+          ) : user?.slackConnected ? (
+            <Ionicons name="checkmark-circle" size={24} color={colors.success} />
+          ) : (
+            <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
           )}
         </TouchableOpacity>
       </View>
@@ -92,129 +203,148 @@ export default function SettingsScreen() {
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>About</Text>
         <View style={styles.aboutCard}>
-          <View style={styles.logoSmall}>
-            <Ionicons name="sparkles" size={24} color="#f59e0b" />
-          </View>
+          <Text style={styles.aboutEmoji}>☕</Text>
           <Text style={styles.appName}>Donna</Text>
           <Text style={styles.appVersion}>Version 1.0.0</Text>
-          <Text style={styles.appTagline}>Your AI Executive Assistant</Text>
+          <Text style={styles.appTagline}>Your personal assistant</Text>
         </View>
       </View>
 
       {/* Sign Out */}
-      <View style={styles.section}>
-        <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-          <Ionicons name="log-out-outline" size={20} color="#ef4444" />
-          <Text style={styles.logoutText}>Sign Out</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
+      <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+        <Ionicons name="log-out-outline" size={20} color={colors.error} />
+        <Text style={styles.logoutText}>Sign Out</Text>
+      </TouchableOpacity>
+
+      <View style={styles.bottomPadding} />
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0a0a0f',
+    backgroundColor: colors.background,
+  },
+  content: {
+    padding: 20,
+  },
+  profileCard: {
+    backgroundColor: colors.surface,
+    borderRadius: 20,
+    padding: 24,
+    alignItems: 'center',
+    marginBottom: 24,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  avatar: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: colors.primaryLight,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  avatarEmoji: {
+    fontSize: 36,
+  },
+  userEmail: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: colors.text,
+    marginBottom: 8,
+  },
+  statusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.successLight,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.success,
+  },
+  statusText: {
+    color: colors.success,
+    fontSize: 13,
+    fontWeight: '500',
   },
   section: {
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#1a1a24',
+    marginBottom: 24,
   },
   sectionTitle: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '600',
-    color: '#888',
+    color: colors.textMuted,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
     marginBottom: 12,
+    marginLeft: 4,
   },
-  userCard: {
+  connectionCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 16,
-  },
-  avatar: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: 'rgba(245, 158, 11, 0.15)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  userInfo: {
-    flex: 1,
-  },
-  userEmail: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#e5e5e5',
-  },
-  userStatus: {
-    fontSize: 13,
-    color: '#22c55e',
-    marginTop: 2,
-  },
-  connectionItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 12,
-    backgroundColor: '#1a1a24',
-    borderRadius: 12,
-    marginBottom: 8,
-  },
-  connectionLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
+    backgroundColor: colors.surface,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   connectionIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  connectionName: {
-    fontSize: 15,
-    fontWeight: '500',
-    color: '#e5e5e5',
-  },
-  connectionStatus: {
-    fontSize: 12,
-    color: '#888',
-    marginTop: 2,
-  },
-  aboutCard: {
-    alignItems: 'center',
-    padding: 24,
-    backgroundColor: '#1a1a24',
-    borderRadius: 12,
-  },
-  logoSmall: {
     width: 48,
     height: 48,
-    borderRadius: 24,
-    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    borderRadius: 14,
     justifyContent: 'center',
     alignItems: 'center',
+    marginRight: 14,
+  },
+  connectionInfo: {
+    flex: 1,
+  },
+  connectionName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.text,
+    marginBottom: 2,
+  },
+  connectionStatus: {
+    fontSize: 13,
+    color: colors.textMuted,
+  },
+  aboutCard: {
+    backgroundColor: colors.surface,
+    borderRadius: 20,
+    padding: 28,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  aboutEmoji: {
+    fontSize: 40,
     marginBottom: 12,
   },
   appName: {
-    fontSize: 20,
+    fontSize: 24,
     fontWeight: '700',
-    color: '#fff',
+    color: colors.text,
+    fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
   },
   appVersion: {
-    fontSize: 12,
-    color: '#666',
+    fontSize: 13,
+    color: colors.textMuted,
     marginTop: 4,
   },
   appTagline: {
-    fontSize: 13,
-    color: '#888',
+    fontSize: 14,
+    color: colors.textMuted,
     marginTop: 8,
   },
   logoutButton: {
@@ -223,14 +353,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
     padding: 16,
-    backgroundColor: 'rgba(239, 68, 68, 0.1)',
-    borderRadius: 12,
+    backgroundColor: colors.surface,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   logoutText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#ef4444',
+    color: colors.error,
+  },
+  bottomPadding: {
+    height: 40,
   },
 });
-
-

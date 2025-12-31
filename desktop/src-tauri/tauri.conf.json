@@ -6,7 +6,7 @@
     "distDir": "../dist"
   },
   "package": {
-    "productName": "Agent",
+    "productName": "Donna",
     "version": "1.0.0"
   },
   "tauri": {
@@ -38,7 +38,7 @@
         "icons/icon.icns",
         "icons/icon.ico"
       ],
-      "identifier": "com.agent.desktop",
+      "identifier": "com.donna.desktop",
       "targets": "all"
     },
     "security": {
@@ -52,12 +52,13 @@
       {
         "fullscreen": false,
         "resizable": true,
-        "title": "Agent",
-        "width": 480,
-        "height": 600,
+        "title": "Donna",
+        "width": 520,
+        "height": 700,
         "center": true,
         "decorations": true,
-        "transparent": false
+        "transparent": false,
+        "alwaysOnTop": false
       }
     ]
   }

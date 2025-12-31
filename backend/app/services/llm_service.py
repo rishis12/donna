@@ -1,59 +1,38 @@
 from groq import Groq
 import json
 from ..core.config import get_settings
+from datetime import datetime
+import pytz
+import base64
+import re
 
 settings = get_settings()
 client = Groq(api_key=settings.groq_api_key)
 
-SYSTEM_PROMPT = """You are Donna, a witty executive assistant (like Donna from Suits). Help users manage calendar, reminders, and emails.
+SYSTEM_PROMPT = """You are Donna, a witty yet highly competent executive assistant (like Donna from Suits). You manage scheduling, reminders, emails, and Slack messages with precision. You MUST return ONLY valid JSON — no markdown, no extra text.
+### PRIMARY OUTPUT FORMAT (single action)
+{"intent":"<schedule_event|move_event|cancel_event|create_reminder|list_reminders|draft_email|send_email|mark_emails_read|delete_emails|get_schedule|summarize_communications|send_slack_message|small_talk|request_clarification>","entities":{"time":"<ISO8601 datetime or null>","event_title":"<string or null>","event_id":"<string or null>","event_ids":["<id1>","<id2>"] or null,"attendees":["email@example.com"] or null,"to":"<email or null>","recipient":"<email or null>","email":"<email or null>","subject":"<email subject or null>","body":"<email body or null>","email_body":"<email message content or null>","message":"<message content for email or Slack or null>","slack_message":"<Slack message content or null>","channel":"<Slack channel name or ID (e.g., #general or C1234567890) or null>","channel_id":"<Slack channel ID or null>","reminder_text":"<text or null>","duration_minutes":<number or null>,"mark_all":<boolean or null>,"email_ids":["<email_id1>","<email_id2>"] or null,"delete_count":<number or null>,"label":"<gmail label like Promotions or category_promotions or null>","subject_search":"<subject text to search for or null>","permanent":<boolean or null>},"response":"<natural response to the user>","requires_confirmation":true|false}
+### MULTI-ACTION FORMAT
+Use ONLY when user clearly requests multiple separate actions.{"actions":[{"intent":"...","entities":{...},"requires_confirmation":true},{"intent":"...","entities":{...},"requires_confirmation":true}],"response":"Summary of all actions for the user.","requires_confirmation":true}
+### HARD RULES (critical)
+1. DO NOT schedule or create reminders in the past. Compare the parsed time to CURRENT_TIME provided. If time <= CURRENT_TIME → reject, ask for a new time.
+2. If the time is missing/unclear/past: return {"intent":"request_clarification","entities":{},"response":"[Explain what's missing or invalid and ask for correct time].","requires_confirmation":false}
+3. For email drafts/sends: "to", "recipient", or "email" must be a valid email address (contains @). If only a name is provided → use "request_clarification" intent and ask for email address.
+4. For marking emails as read: If user says "mark all emails read" or "mark all emails as read" → use "mark_emails_read" intent with "mark_all": true. If user specifies specific emails → use "mark_emails_read" intent with "email_ids" array.
+5. For deleting emails: If user says "delete emails" or "delete X emails" or "delete emails from [label]" → use "delete_emails" intent. Include "delete_count" for number of emails, "label" for inbox/label (e.g., "Promotions" or "category_promotions"), "subject_search" for subject text to search, "email_ids" for specific email IDs, or set all to null to delete matching criteria. Set "permanent": true for permanent deletion (defaults to false/trash).
+6. For Slack messages: If user wants to send a message to Slack (e.g., "send a message to #channel", "post to Slack", "message #channel-name") → use "send_slack_message" intent. Extract "channel" (channel name like "#general" or channel ID), "channel_id" (if provided as ID), and "message" or "slack_message" (the message content). Channel can be specified as "#channel-name" or just "channel-name" (without #). If channel is not specified, ask for clarification. requires_confirmation = TRUE for sending Slack messages.
+7. Confirmation behavior: requires_confirmation = TRUE for actions that modify calendar, send email, send Slack messages, or delete emails. requires_confirmation = FALSE when clarifying, answering conversationally, or for read-only operations like listing reminders or marking emails as read.
+6. ALWAYS output strictly valid JSON. No markdown, no commentary outside JSON.
+7. Use LOCAL TIMEZONE and CURRENT_TIME from context for all time reasoning. Interpret natural language times ("in 30 mins", "tomorrow at 3", "next Friday morning"). IMPORTANT: Relative times like "in 30 seconds", "in 1 minute", "in 5 minutes" are ALWAYS in the future - accept them!
+8. If user gives multiple event operations in one request → use MULTI-ACTION format.
+9. Make sure to always check the current time before scheduling or moving events and reminders.
+### VALID EXAMPLES
+{"intent":"create_reminder","entities":{"reminder_text":"call mom","time":"2025-01-22T18:00:00"},"response":"I'll remind you at 6pm.","requires_confirmation":true}
+{"intent":"draft_email","entities":{"to":"sarah@example.com","subject":"Update","body":"Just checking in."},"response":"Draft ready — should I send it?","requires_confirmation":true}
+{"intent":"send_slack_message","entities":{"channel":"#all-freakshiprojects","message":"Welcome everyone to freakshiprojects!"},"response":"I'll post that message to #all-freakshiprojects.","requires_confirmation":true}
+{"intent":"request_clarification","entities":{},"response":"What's the email address for Tom?","requires_confirmation":false}
+Return ONLY JSON — no backticks, no explanation."""
 
-ALWAYS return valid JSON. For MULTIPLE actions, use the "actions" array:
-{
-  "actions": [
-    {
-      "intent": "move_event|schedule_event|cancel_event|create_reminder|etc",
-      "entities": {"event_id": "...", "time": "...", "event_title": "..."}
-    },
-    {
-      "intent": "move_event",
-      "entities": {"event_id": "...", "time": "..."}
-    }
-  ],
-  "response": "Your summary of all actions",
-  "requires_confirmation": true
-}
-
-For SINGLE actions (most common):
-{
-  "intent": "schedule_event|move_event|update_event|cancel_event|create_reminder|list_reminders|draft_email|send_email|get_schedule|small_talk",
-  "entities": {
-    "time": "ISO datetime (2024-12-22T14:00:00)",
-    "event_title": "meeting title",
-    "event_id": "calendar event ID",
-    "event_ids": ["multiple IDs"],
-    "attendees": ["email@example.com"],
-    "reminder_text": "reminder content",
-    "duration_minutes": 30
-  },
-  "response": "Your response",
-  "requires_confirmation": true
-}
-
-RULES:
-1. For MULTIPLE actions (move my 4pm to 5pm AND my 6pm to 7pm), use the "actions" array
-2. requires_confirmation = TRUE when ready to execute, FALSE when asking questions
-3. Parse times relative to current time provided
-4. For event operations, use the event_id from the calendar list
-
-EXAMPLES:
-
-Single action:
-{"intent":"schedule_event","entities":{"event_title":"Team Sync","time":"2024-12-22T14:00:00"},"response":"I'll schedule 'Team Sync' for tomorrow at 2pm. Say the word!","requires_confirmation":true}
-
-Multiple actions (rescheduling chain):
-{"actions":[{"intent":"move_event","entities":{"event_id":"abc123","time":"2024-12-21T17:00:00"}},{"intent":"move_event","entities":{"event_id":"def456","time":"2024-12-21T19:00:00"}}],"response":"I'll move your 4pm to 5pm and your 6pm to 7pm. Say the word!","requires_confirmation":true}
-
-IMPORTANT: Return ONLY raw JSON. No markdown, no explanation."""
 
 async def parse_utterance(utterance: str, current_time: str, conversation_history: list = None, timezone: str = "UTC", calendar_context: str = "") -> dict:
     # Quick responses for simple greetings (avoid API call)
@@ -65,7 +44,7 @@ async def parse_utterance(utterance: str, current_time: str, conversation_histor
             "response": "Hey! What can I do for you?",
             "requires_confirmation": False
         }
-    
+
     thanks_phrases = ['thanks', 'thank you', 'thx', 'ty', 'appreciate it']
     if utterance.lower().strip() in thanks_phrases:
         return {
@@ -74,17 +53,26 @@ async def parse_utterance(utterance: str, current_time: str, conversation_histor
             "response": "Anytime! What else do you need?",
             "requires_confirmation": False
         }
-    
+
     try:
-        time_context = f"\n\nCurrent time: {current_time}\nUser's timezone: {timezone}\nALWAYS express times in the user's timezone ({timezone}), not UTC."
+        # Parse current_time as UTC, then convert to user's timezone
+        utc_now = datetime.fromisoformat(current_time.replace('Z', '+00:00'))
+        user_tz = pytz.timezone(timezone)
+        local_now = utc_now.astimezone(user_tz)
+
+        # Format for LLM
+        readable_local_time = local_now.strftime("%A, %B %d, %Y at %I:%M:%S %p")
+        iso_local_time = local_now.isoformat()
+
+        time_context = f"CURRENT TIME (VERY IMPORTANT): Local time ({timezone}): {readable_local_time}. ISO: {iso_local_time}. ALWAYS express times in user's timezone ({timezone}), not UTC. When calculating relative times (e.g., 'in 30 seconds', 'in 1 minute', 'tomorrow at 5pm'), use the Local time as your reference. IMPORTANT: 'in X seconds/minutes/hours' means X time units FROM NOW (the current local time above), which is in the FUTURE. DO NOT schedule or create reminders for times that are in the past relative to the current local time above. However, relative times like 'in 30 seconds' or 'in 1 minute' are ALWAYS in the future and should be accepted."
         full_context = SYSTEM_PROMPT + time_context + calendar_context
         messages = [
             {"role": "system", "content": full_context}
         ]
-        
-        # Add conversation history (last 5 exchanges) - formatted as context
+
+        # Add conversation history (last 2 exchanges) - formatted as context
         if conversation_history:
-            for msg in conversation_history[-5:]:
+            for msg in conversation_history[-2:]:
                 # Format previous exchanges simply
                 messages.append({"role": "user", "content": msg["user"]})
                 # Previous assistant responses should be the JSON they returned
@@ -94,22 +82,40 @@ async def parse_utterance(utterance: str, current_time: str, conversation_histor
                     "response": msg["assistant"],
                     "requires_confirmation": False
                 })})
-        
+
         # Add current user message
         messages.append({"role": "user", "content": utterance})
-        
+
         print(f"[LLM] Sending request for: '{utterance}'")
-        
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=messages,
-            temperature=0.5,  # Lower temperature for more consistent JSON
-            max_tokens=1000
-        )
-        
+
+        # Try with 70B model first, fallback to 8B on rate limit
+        model = "llama-3.3-70b-versatile"
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=0.5,
+                max_tokens=300  # Reduced from 1000 - sufficient for JSON intent parsing
+            )
+        except Exception as e:
+            # If rate limit error, fallback to cheaper 8B model
+            error_str = str(e).lower()
+            error_type = type(e).__name__.lower()
+            if "rate limit" in error_str or "429" in error_str or "quota" in error_str or "ratelimit" in error_type:
+                print(f"[LLM] Rate limit hit, falling back to 8B model")
+                model = "llama-3.1-8b-instant"  # Correct model name for Groq 8B model
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=0.5,
+                    max_tokens=300
+                )
+            else:
+                raise
+
         text = response.choices[0].message.content.strip()
         print(f"[LLM] Raw response: {text[:300]}...")
-        
+
         # Clean up response if it has markdown code blocks
         if '```' in text:
             # Extract content between code blocks
@@ -119,7 +125,7 @@ async def parse_utterance(utterance: str, current_time: str, conversation_histor
                 if text.startswith('json'):
                     text = text[4:]
                 text = text.strip()
-        
+
         # Try to find JSON in the response if it's not pure JSON
         if not text.startswith('{'):
             # Look for JSON object in the text
@@ -127,7 +133,7 @@ async def parse_utterance(utterance: str, current_time: str, conversation_histor
             end = text.rfind('}')
             if start != -1 and end != -1:
                 text = text[start:end+1]
-        
+
         result = json.loads(text)
         print(f"[LLM] Parsed intent: {result.get('intent')}")
         return result
@@ -152,28 +158,135 @@ async def parse_utterance(utterance: str, current_time: str, conversation_histor
             "error": str(e)
         }
 
+
 async def draft_email_content(to: str, subject_hint: str, context: str) -> dict:
+    """
+    Generate email content using LLM.
+    Returns dict with 'subject' and 'body' fields.
+    """
     try:
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": "You are an email drafting assistant. Write professional, clear emails. Return JSON with 'subject' and 'body' fields only."},
-                {"role": "user", "content": f"Draft an email to {to}. Context: {context}. Subject hint: {subject_hint}"}
-            ],
-            temperature=0.7,
-            max_tokens=1000
-        )
+        # Check for user's specific formatting instructions
+        avoid_dear = "no dear" in context.lower() or "without dear" in context.lower() or "don't use dear" in context.lower() or "no 'dear'" in context.lower()
+        include_tagline = "sent with donna" in context.lower() or "tagline" in context.lower() or "include donna" in context.lower()
+        brief = "brief" in context.lower() or "short" in context.lower()
         
+        # If context is very specific and user wants it as-is, and no special formatting needed
+        if context and len(context) > 50 and not avoid_dear and not include_tagline and ("Dear" in context or "Hi" in context or "Hello" in context):
+            return {
+                "subject": subject_hint or "No subject",
+                "body": context
+            }
+        
+        # Build prompt with user's instructions
+        prompt = f"Draft a professional email to {to}."
+        if subject_hint:
+            prompt += f" Subject: {subject_hint}."
+        if context:
+            prompt += f" Message/content to include: {context}"
+        
+        # Add formatting instructions
+        format_instructions = []
+        if avoid_dear:
+            format_instructions.append("DO NOT include 'Dear', 'Hi', or any greeting - start directly with the message content")
+        if brief:
+            format_instructions.append("Keep it brief and concise")
+        if include_tagline:
+            format_instructions.append('Include "Sent with Donna" as a tagline at the end')
+        
+        if format_instructions:
+            prompt += f" Formatting instructions: {', '.join(format_instructions)}."
+        
+        prompt += " Return ONLY valid JSON with 'subject' and 'body' fields. Write naturally, not overly formal unless requested."
+        
+        # Try 70B, fallback to 8B on rate limit
+        model = "llama-3.3-70b-versatile"
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": "You are an email drafting assistant. Write clear, concise emails. Follow user's formatting instructions exactly. Always return valid JSON with 'subject' and 'body' fields only. No markdown. If user says 'no Dear', do not include any greeting."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7,
+                max_tokens=400  # Reduced from 800
+            )
+        except Exception as e:
+            error_str = str(e).lower()
+            error_type = type(e).__name__.lower()
+            if "rate limit" in error_str or "429" in error_str or "quota" in error_str or "ratelimit" in error_type:
+                print(f"[LLM] Rate limit hit, falling back to 8B model for email draft")
+                model = "llama-3.1-8b-instant"  # Correct model name for Groq 8B model
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": "You are an email drafting assistant. Write clear, concise emails. Follow user's formatting instructions exactly. Always return valid JSON with 'subject' and 'body' fields only. No markdown. If user says 'no Dear', do not include any greeting."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.7,
+                    max_tokens=400
+                )
+            else:
+                raise
+
         text = response.choices[0].message.content.strip()
-        if text.startswith('```'):
-            text = text.split('```')[1]
-            if text.startswith('json'):
-                text = text[4:]
-            text = text.strip()
+
+        # Clean up response if it has markdown code blocks
+        if '```' in text:
+            parts = text.split('```')
+            if len(parts) >= 2:
+                text = parts[1]
+                if text.startswith('json'):
+                    text = text[4:]
+                text = text.strip()
+
+        # Try to find JSON in the response
+        if not text.startswith('{'):
+            start = text.find('{')
+            end = text.rfind('}')
+            if start != -1 and end != -1:
+                text = text[start:end+1]
+
+        result = json.loads(text)
+
+        # Ensure we have subject and body
+        if not result.get("subject"):
+            result["subject"] = subject_hint or "No subject"
+        if not result.get("body"):
+            result["body"] = context or ""
         
-        return json.loads(text)
+        # Post-process to ensure user's instructions are followed
+        body = result.get("body", "")
+        
+        # Remove "Dear" if user requested
+        if avoid_dear:
+            body = body.replace("Dear ", "").replace("Dear,", "").replace("Dear, ", "").strip()
+            # Remove common greetings at start
+            for greeting in ["Hi ", "Hello ", "Hey ", "Hi,", "Hello,", "Hey,"]:
+                if body.startswith(greeting):
+                    body = body[len(greeting):].strip()
+        
+        # Add tagline if requested
+        if include_tagline and "Sent with Donna" not in body and "sent with donna" not in body.lower():
+            body += "\n\nSent with Donna"
+        
+        result["body"] = body.strip()
+
+        return result
+    except json.JSONDecodeError as e:
+        print(f"Error parsing email draft JSON: {e}")
+        # Fallback to provided values
+        return {
+            "subject": subject_hint or "No subject",
+            "body": context or "No content provided"
+        }
     except Exception as e:
-        return {"subject": subject_hint, "body": context, "error": str(e)}
+        print(f"Error generating email draft: {e}")
+        return {
+            "subject": subject_hint or "No subject",
+            "body": context or "No content provided",
+            "error": str(e)
+        }
+
 
 async def transcribe_audio(audio_data: bytes) -> str:
     # Groq supports Whisper!
@@ -185,3 +298,119 @@ async def transcribe_audio(audio_data: bytes) -> str:
         return transcription.text
     except Exception as e:
         return f"Error transcribing audio: {str(e)}"
+
+
+async def summarize_communications(emails: list, teams_messages: list, slack_messages: list = None) -> str:
+    """
+    Use LLM to create an intelligent summary of emails, Teams messages, and Slack messages.
+    Acts like a real assistant briefing the user.
+    """
+    if slack_messages is None:
+        slack_messages = []
+    
+    if not emails and not teams_messages and not slack_messages:
+        return "No new emails or messages to review. You're all caught up!"
+
+    # Format emails for LLM
+    email_text = ""
+    if emails:
+        email_text = "\n\nEMAILS:\n"
+        for i, email in enumerate(emails[:15], 1):  # Limit to 15 for context
+            provider = email.get("provider", "email")
+            subject = email.get("subject", "No subject")
+            from_addr = email.get("from", "Unknown")
+            snippet = email.get("snippet") or email.get("bodyPreview", "")[:200]
+            date = email.get("date", "")
+            unread = email.get("unread", False)
+
+            email_text += f"{i}. [{provider.upper()}] From: {from_addr}\n"
+            email_text += f"   Subject: {subject}\n"
+            if snippet:
+                email_text += f"   Preview: {snippet}\n"
+            email_text += f"   Date: {date}\n"
+            email_text += f"   Status: {'UNREAD' if unread else 'Read'}\n\n"
+
+    # Format Teams messages for LLM
+    teams_text = ""
+    if teams_messages:
+        teams_text = "\n\nTEAMS MESSAGES:\n"
+        for i, msg in enumerate(teams_messages[:15], 1):  # Limit to 15 for context
+            from_name = msg.get("from", "Unknown")
+            body = msg.get("body", "")[:300]
+            date = msg.get("date", "")
+            unread = msg.get("unread", False)
+
+            teams_text += f"{i}. From: {from_name}\n"
+            teams_text += f"   Message: {body}\n"
+            teams_text += f"   Date: {date}\n"
+            teams_text += f"   Status: {'UNREAD' if unread else 'Read'}\n\n"
+
+    # Format Slack messages for LLM
+    slack_text = ""
+    if slack_messages:
+        slack_text = "\n\nSLACK MESSAGES:\n"
+        for i, msg in enumerate(slack_messages[:15], 1):  # Limit to 15 for context
+            from_name = msg.get("username", msg.get("user", "Unknown"))
+            channel = msg.get("channel_name", msg.get("channel", "Unknown channel"))
+            text = msg.get("text", "")[:300]
+            timestamp = msg.get("timestamp", "")
+
+            slack_text += f"{i}. Channel: #{channel}\n"
+            slack_text += f"   From: {from_name}\n"
+            slack_text += f"   Message: {text}\n"
+            slack_text += f"   Time: {timestamp}\n\n"
+
+    prompt = f"""You are Donna, an executive assistant. The user wants a briefing on their communications.
+
+{email_text}{teams_text}{slack_text}
+
+Create a concise, actionable summary (2-3 paragraphs max) that:
+1. Highlights the most important/urgent items
+2. Groups related items together
+3. Mentions who needs responses
+4. Uses a friendly, professional tone like a real assistant would
+
+Focus on what matters - skip routine/automated emails unless they're important.
+Be specific about action items and deadlines if mentioned.
+
+Return ONLY the summary text, no markdown, no bullet points unless necessary."""
+
+    try:
+        # Try 70B, fallback to 8B on rate limit
+        model = "llama-3.3-70b-versatile"
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": "You are Donna, a professional executive assistant. Provide clear, actionable briefings."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.6,
+                max_tokens=300  # Reduced from 500
+            )
+        except Exception as e:
+            error_str = str(e).lower()
+            error_type = type(e).__name__.lower()
+            if "rate limit" in error_str or "429" in error_str or "quota" in error_str or "ratelimit" in error_type:
+                print(f"[LLM] Rate limit hit, falling back to 8B model for summary")
+                model = "llama-3.1-8b-instant"  # Correct model name for Groq 8B model
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": "You are Donna, a professional executive assistant. Provide clear, actionable briefings."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.6,
+                    max_tokens=300
+                )
+            else:
+                raise
+
+        summary = response.choices[0].message.content.strip()
+        return summary
+    except Exception as e:
+        print(f"Error generating summary: {e}")
+        # Fallback summary
+        email_count = len(emails)
+        teams_count = len(teams_messages)
+        return f"You have {email_count} email{'s' if email_count != 1 else ''} and {teams_count} Teams message{'s' if teams_count != 1 else ''} to review. Check your inbox and Teams for details."

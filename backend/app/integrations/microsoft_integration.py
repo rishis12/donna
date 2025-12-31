@@ -7,10 +7,24 @@ from ..core.security import encrypt_token, decrypt_token
 
 settings = get_settings()
 
-SCOPES = ["openid", "profile", "email", "User.Read", "Calendars.ReadWrite", "Mail.Send"]
+SCOPES = [
+    "User.Read", 
+    "Calendars.ReadWrite", 
+    "Mail.Send",
+    "Mail.Read",  # For reading emails
+    "Chat.Read",  # For reading Teams messages
+    "ChatMessage.Read"  # For reading Teams chat messages
+]
+# Note: MSAL automatically adds openid, profile, offline_access, and email scopes
 GRAPH_URL = "https://graph.microsoft.com/v1.0"
 
 def get_msal_app() -> ConfidentialClientApplication:
+    """Get MSAL app instance. Raises error if credentials are not configured."""
+    if not settings.microsoft_client_id or not settings.microsoft_client_secret:
+        raise ValueError(
+            "Microsoft OAuth credentials not configured. "
+            "Please set MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET in your .env file."
+        )
     return ConfidentialClientApplication(
         settings.microsoft_client_id,
         authority="https://login.microsoftonline.com/common",
@@ -26,7 +40,13 @@ def get_auth_url(state: str = None) -> str:
     )
 
 async def exchange_code(code: str) -> dict:
+    """Exchange authorization code for access token."""
     app = get_msal_app()
+    
+    # Ensure redirect_uri is set
+    if not settings.microsoft_redirect_uri:
+        raise ValueError("MICROSOFT_REDIRECT_URI not configured in .env file")
+    
     result = app.acquire_token_by_authorization_code(
         code,
         scopes=SCOPES,
@@ -39,7 +59,11 @@ async def exchange_code(code: str) -> dict:
             "refresh_token": encrypt_token(result.get("refresh_token", "")),
             "raw_token": result["access_token"]  # For immediate use to fetch user info
         }
-    raise Exception(result.get("error_description", "Failed to get token"))
+    
+    # Provide more detailed error message
+    error = result.get("error", "Unknown error")
+    error_description = result.get("error_description", "Failed to get token")
+    raise Exception(f"Microsoft OAuth error: {error} - {error_description}")
 
 async def get_user_info(access_token: str) -> dict:
     """Get user profile info from Microsoft Graph."""
@@ -139,4 +163,210 @@ async def send_email(access_token: str, to: str, subject: str, body: str) -> dic
         )
         response.raise_for_status()
         return {"status": "sent"}
+
+# Outlook email reading functions
+async def list_emails(
+    access_token: str,
+    max_results: int = 20,
+    unread_only: bool = False
+) -> List[dict]:
+    """
+    Fetch emails from Outlook using Microsoft Graph API.
+    """
+    async with httpx.AsyncClient() as client:
+        params = {
+            "$top": max_results,
+            "$orderby": "receivedDateTime desc",
+            "$select": "id,subject,from,receivedDateTime,body,bodyPreview,isRead"
+        }
+        
+        if unread_only:
+            params["$filter"] = "isRead eq false"
+        
+        response = await client.get(
+            f"{GRAPH_URL}/me/messages",
+            headers={"Authorization": f"Bearer {decrypt_token(access_token)}"},
+            params=params
+        )
+        response.raise_for_status()
+        messages = response.json().get("value", [])
+        
+        emails = []
+        for msg in messages:
+            from_address = msg.get("from", {}).get("emailAddress", {})
+            body_content = msg.get("body", {})
+            
+            emails.append({
+                "id": msg.get("id"),
+                "subject": msg.get("subject", ""),
+                "from": from_address.get("address", ""),
+                "date": msg.get("receivedDateTime", ""),
+                "body": body_content.get("content", ""),
+                "bodyPreview": msg.get("bodyPreview", ""),
+                "unread": not msg.get("isRead", True)
+            })
+        
+        return emails
+
+async def get_email_count(access_token: str, unread_only: bool = False) -> int:
+    """
+    Get count of emails (unread or total) using Microsoft Graph API.
+    """
+    async with httpx.AsyncClient() as client:
+        params = {
+            "$top": 1,
+            "$count": "true",
+            "$select": "id"
+        }
+        
+        if unread_only:
+            params["$filter"] = "isRead eq false"
+        
+        response = await client.get(
+            f"{GRAPH_URL}/me/messages",
+            headers={
+                "Authorization": f"Bearer {decrypt_token(access_token)}",
+                "ConsistencyLevel": "eventual"  # Required for $count
+            },
+            params=params
+        )
+        response.raise_for_status()
+        
+        # Try to get count from response header or body
+        count_header = response.headers.get("@odata.count")
+        if count_header:
+            return int(count_header)
+        
+        # Fallback: if we got results, check the @odata.count in response body
+        response_data = response.json()
+        if "@odata.count" in response_data:
+            return int(response_data["@odata.count"])
+        
+        # If no count available, return 0 (better than error)
+        return 0
+
+# Microsoft Teams message reading functions
+async def list_teams_messages(
+    access_token: str,
+    max_results: int = 20,
+    unread_only: bool = False
+) -> List[dict]:
+    """
+    Fetch messages from Microsoft Teams (chats and channels) using Microsoft Graph API.
+    Gets messages from personal chats (1-on-1 and group chats).
+    """
+    async with httpx.AsyncClient() as client:
+        decrypted_token = decrypt_token(access_token)
+        headers = {"Authorization": f"Bearer {decrypted_token}"}
+        all_messages = []
+        
+        try:
+            # Get personal chats
+            chats_response = await client.get(
+                f"{GRAPH_URL}/me/chats",
+                headers=headers,
+                params={
+                    "$top": 50,  # Get up to 50 chats
+                    "$select": "id,chatType,topic,unreadCount"
+                }
+            )
+            chats_response.raise_for_status()
+            chats = chats_response.json().get("value", [])
+            
+            # Get messages from each chat
+            # Limit to first 10 chats to avoid too many API calls
+            for chat in chats[:10]:
+                try:
+                    chat_id = chat.get("id")
+                    if not chat_id:
+                        continue
+                    
+                    # Get messages from this chat
+                    messages_params = {
+                        "$top": 5,  # Get last 5 messages per chat
+                        "$orderby": "createdDateTime desc",
+                        "$select": "id,createdDateTime,from,body"
+                    }
+                    
+                    messages_response = await client.get(
+                        f"{GRAPH_URL}/me/chats/{chat_id}/messages",
+                        headers=headers,
+                        params=messages_params
+                    )
+                    messages_response.raise_for_status()
+                    chat_messages = messages_response.json().get("value", [])
+                    
+                    # Format messages
+                    for msg in chat_messages:
+                        from_user = msg.get("from", {}).get("user", {})
+                        body_content = msg.get("body", {})
+                        
+                        all_messages.append({
+                            "id": msg.get("id"),
+                            "from": from_user.get("displayName", "Unknown"),
+                            "body": body_content.get("content", ""),
+                            "date": msg.get("createdDateTime", ""),
+                            "chatId": chat_id,
+                            "chatType": chat.get("chatType", "unknown"),
+                            "topic": chat.get("topic", ""),
+                            "unread": chat.get("unreadCount", 0) > 0
+                        })
+                        
+                        # Stop if we have enough messages
+                        if len(all_messages) >= max_results:
+                            break
+                    
+                    if len(all_messages) >= max_results:
+                        break
+                        
+                except Exception as e:
+                    # Skip chats that fail (might be permission issues or empty chats)
+                    print(f"Error fetching messages from chat {chat.get('id')}: {e}")
+                    continue
+            
+            # Sort by date (most recent first) and limit to max_results
+            all_messages.sort(key=lambda x: x.get("date", ""), reverse=True)
+            
+            # Filter unread if requested
+            if unread_only:
+                all_messages = [msg for msg in all_messages if msg.get("unread", False)]
+            
+            return all_messages[:max_results]
+            
+        except Exception as e:
+            print(f"Error fetching Teams messages: {e}")
+            # Return empty list on error rather than crashing
+            return []
+
+async def get_teams_message_count(access_token: str, unread_only: bool = False) -> int:
+    """
+    Get count of Teams messages (unread or total) using Microsoft Graph API.
+    """
+    async with httpx.AsyncClient() as client:
+        decrypted_token = decrypt_token(access_token)
+        headers = {"Authorization": f"Bearer {decrypted_token}"}
+        
+        try:
+            # Get personal chats
+            chats_response = await client.get(
+                f"{GRAPH_URL}/me/chats",
+                headers=headers,
+                params={"$top": 50, "$select": "id,unreadCount"}
+            )
+            chats_response.raise_for_status()
+            chats = chats_response.json().get("value", [])
+            
+            if unread_only:
+                # Count unread messages across all chats
+                total_unread = sum(chat.get("unreadCount", 0) for chat in chats)
+                return total_unread
+            else:
+                # For total count, we'd need to iterate through all messages
+                # This is expensive, so we return the number of chats as an approximation
+                # or count messages if needed (but that's slow)
+                return len(chats)
+                
+        except Exception as e:
+            print(f"Error fetching Teams message count: {e}")
+            return 0
 

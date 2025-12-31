@@ -27,4 +27,5 @@ class User(Base):
     
     reminders = relationship("Reminder", back_populates="user")
     interactions = relationship("Interaction", back_populates="user")
+    messaging_accounts = relationship("MessagingAccount", back_populates="user")
 

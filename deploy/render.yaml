@@ -1,0 +1,53 @@
+services:
+  - type: web
+    name: donna-backend
+    env: docker
+    dockerfilePath: ./deploy/Dockerfile
+    dockerContext: .
+    dockerCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ENCRYPTION_KEY
+        generateValue: true
+      - key: JWT_SECRET
+        fromSecret: SECRET_KEY
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: BASE_URL
+        sync: false
+      - key: ENV
+        value: production
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_REDIRECT_URI
+        sync: false
+      - key: MICROSOFT_CLIENT_ID
+        sync: false
+      - key: MICROSOFT_CLIENT_SECRET
+        sync: false
+      - key: MICROSOFT_REDIRECT_URI
+        sync: false
+      - key: SLACK_CLIENT_ID
+        sync: false
+      - key: SLACK_CLIENT_SECRET
+        sync: false
+      - key: SLACK_REDIRECT_URI
+        sync: false
+      - key: SLACK_BOT_TOKEN
+        sync: false
+      - key: SLACK_SIGNING_SECRET
+        sync: false
+
+databases:
+  - name: donna-postgres
+    plan: free
+    databaseName: donna_db
+    user: donna
+

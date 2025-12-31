@@ -13,13 +13,28 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useAppStore } from '../../stores/appStore';
 
+// Earthy tan/brown colors
+const colors = {
+  background: '#FAF8F5',
+  surface: '#FFFFFF',
+  surfaceAlt: '#F5F0E8',
+  primary: '#B89460',
+  primaryLight: '#F7F3EE',
+  text: '#443D35',
+  textMuted: '#9C8B78',
+  textLight: '#B8A690',
+  border: '#E8DFD3',
+  success: '#8B9A6F',
+  userBubble: '#B89460',
+  assistantBubble: '#FFFFFF',
+};
+
 export default function ChatScreen() {
   const [input, setInput] = useState('');
   const flatListRef = useRef<FlatList>(null);
   const { messages, isLoading, sendMessage, confirmAction, clearHistory } = useAppStore();
 
   useEffect(() => {
-    // Scroll to bottom when messages change
     setTimeout(() => {
       flatListRef.current?.scrollToEnd({ animated: true });
     }, 100);
@@ -53,6 +68,11 @@ export default function ChatScreen() {
 
     return (
       <View style={[styles.messageRow, isUser && styles.messageRowUser]}>
+        {!isUser && (
+          <View style={styles.avatarSmall}>
+            <Text style={styles.avatarEmoji}>☕</Text>
+          </View>
+        )}
         <View
           style={[
             styles.messageBubble,
@@ -61,7 +81,7 @@ export default function ChatScreen() {
         >
           {intentIcon && (
             <View style={styles.intentBadge}>
-              <Ionicons name={intentIcon as any} size={12} color="#f59e0b" />
+              <Ionicons name={intentIcon as any} size={12} color={colors.primary} />
               <Text style={styles.intentText}>
                 {item.intent?.replace('_', ' ')}
               </Text>
@@ -77,14 +97,13 @@ export default function ChatScreen() {
                 style={styles.confirmButton}
                 onPress={() => confirmAction(item.actionId!, true)}
               >
-                <Ionicons name="checkmark" size={16} color="#22c55e" />
+                <Ionicons name="checkmark" size={16} color="#fff" />
                 <Text style={styles.confirmText}>Do it</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.cancelButton}
                 onPress={() => confirmAction(item.actionId!, false)}
               >
-                <Ionicons name="close" size={16} color="#888" />
                 <Text style={styles.cancelText}>Cancel</Text>
               </TouchableOpacity>
             </View>
@@ -100,10 +119,10 @@ export default function ChatScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={90}
     >
-      {/* Header Actions */}
+      {/* Header */}
       <View style={styles.headerActions}>
         <TouchableOpacity style={styles.headerButton} onPress={clearHistory}>
-          <Ionicons name="refresh" size={20} color="#888" />
+          <Ionicons name="refresh-outline" size={22} color={colors.textMuted} />
         </TouchableOpacity>
       </View>
 
@@ -117,11 +136,12 @@ export default function ChatScreen() {
         showsVerticalScrollIndicator={false}
       />
 
-      {/* Loading indicator */}
+      {/* Loading */}
       {isLoading && (
         <View style={styles.loadingContainer}>
           <View style={styles.loadingBubble}>
-            <ActivityIndicator size="small" color="#f59e0b" />
+            <ActivityIndicator size="small" color={colors.primary} />
+            <Text style={styles.loadingText}>Thinking...</Text>
           </View>
         </View>
       )}
@@ -131,7 +151,7 @@ export default function ChatScreen() {
         <TextInput
           style={styles.input}
           placeholder="Message Donna..."
-          placeholderTextColor="#666"
+          placeholderTextColor={colors.textMuted}
           value={input}
           onChangeText={setInput}
           onSubmitEditing={handleSend}
@@ -144,7 +164,7 @@ export default function ChatScreen() {
           onPress={handleSend}
           disabled={!input.trim() || isLoading}
         >
-          <Ionicons name="send" size={20} color="#fff" />
+          <Ionicons name="arrow-up" size={22} color="#fff" />
         </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>
@@ -154,14 +174,15 @@ export default function ChatScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0a0a0f',
+    backgroundColor: colors.background,
   },
   headerActions: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
     padding: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#1a1a24',
+    borderBottomColor: colors.border,
+    backgroundColor: colors.background,
   },
   headerButton: {
     padding: 8,
@@ -171,122 +192,149 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
   },
   messageRow: {
-    marginBottom: 12,
+    marginBottom: 16,
     flexDirection: 'row',
+    alignItems: 'flex-end',
   },
   messageRowUser: {
     justifyContent: 'flex-end',
   },
-  messageBubble: {
-    maxWidth: '85%',
-    padding: 12,
+  avatarSmall: {
+    width: 32,
+    height: 32,
     borderRadius: 16,
+    backgroundColor: colors.primaryLight,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  avatarEmoji: {
+    fontSize: 16,
+  },
+  messageBubble: {
+    maxWidth: '80%',
+    padding: 14,
+    borderRadius: 20,
   },
   userBubble: {
-    backgroundColor: 'rgba(245, 158, 11, 0.2)',
-    borderBottomRightRadius: 4,
+    backgroundColor: colors.userBubble,
+    borderBottomRightRadius: 6,
   },
   assistantBubble: {
-    backgroundColor: '#1a1a24',
-    borderBottomLeftRadius: 4,
+    backgroundColor: colors.assistantBubble,
+    borderBottomLeftRadius: 6,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   messageText: {
-    fontSize: 15,
-    color: '#e5e5e5',
+    fontSize: 16,
+    color: colors.text,
     lineHeight: 22,
   },
   userText: {
-    color: '#fcd34d',
+    color: '#FFFFFF',
   },
   intentBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 6,
+    marginBottom: 8,
     gap: 4,
   },
   intentText: {
-    fontSize: 11,
-    color: '#f59e0b',
+    fontSize: 12,
+    color: colors.primary,
     textTransform: 'capitalize',
+    fontWeight: '500',
   },
   confirmButtons: {
     flexDirection: 'row',
-    gap: 8,
-    marginTop: 12,
-    paddingTop: 12,
+    gap: 10,
+    marginTop: 14,
+    paddingTop: 14,
     borderTopWidth: 1,
-    borderTopColor: '#2a2a3a',
+    borderTopColor: colors.border,
   },
   confirmButton: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
-    padding: 10,
-    backgroundColor: 'rgba(34, 197, 94, 0.15)',
-    borderRadius: 10,
+    gap: 6,
+    padding: 12,
+    backgroundColor: colors.success,
+    borderRadius: 12,
   },
   confirmText: {
-    color: '#22c55e',
-    fontWeight: '500',
-    fontSize: 13,
+    color: '#FFFFFF',
+    fontWeight: '600',
+    fontSize: 14,
   },
   cancelButton: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
-    padding: 10,
-    backgroundColor: '#2a2a3a',
-    borderRadius: 10,
+    padding: 12,
+    backgroundColor: colors.surfaceAlt,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   cancelText: {
-    color: '#888',
-    fontWeight: '500',
-    fontSize: 13,
+    color: colors.textMuted,
+    fontWeight: '600',
+    fontSize: 14,
   },
   loadingContainer: {
     paddingHorizontal: 16,
     paddingBottom: 8,
   },
   loadingBubble: {
-    backgroundColor: '#1a1a24',
-    padding: 16,
-    borderRadius: 16,
-    borderBottomLeftRadius: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: colors.surface,
+    padding: 14,
+    borderRadius: 20,
+    borderBottomLeftRadius: 6,
     alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  loadingText: {
+    color: colors.textMuted,
+    fontSize: 14,
   },
   inputContainer: {
     flexDirection: 'row',
     padding: 12,
-    paddingBottom: Platform.OS === 'ios' ? 24 : 12,
+    paddingBottom: Platform.OS === 'ios' ? 28 : 12,
     borderTopWidth: 1,
-    borderTopColor: '#1a1a24',
-    gap: 8,
+    borderTopColor: colors.border,
+    backgroundColor: colors.surface,
+    gap: 10,
   },
   input: {
     flex: 1,
-    backgroundColor: '#1a1a24',
-    borderRadius: 20,
-    paddingHorizontal: 16,
+    backgroundColor: colors.surfaceAlt,
+    borderRadius: 24,
+    paddingHorizontal: 18,
     paddingVertical: 12,
     fontSize: 16,
-    color: '#fff',
+    color: colors.text,
     maxHeight: 100,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   sendButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#f59e0b',
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: colors.primary,
     justifyContent: 'center',
     alignItems: 'center',
   },
   sendButtonDisabled: {
-    backgroundColor: '#2a2a3a',
+    backgroundColor: colors.border,
   },
 });
-
-

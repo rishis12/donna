@@ -10,30 +10,36 @@ const YOUR_PC_IP = '192.168.1.177'; // ← CHANGE THIS to your computer's IP (ru
 
 // Auto-detect the correct API URL based on environment
 const getApiBase = () => {
-  // Production API from environment variable
+  // Production API from environment variable (takes priority)
   if (process.env.EXPO_PUBLIC_API_URL) {
     return process.env.EXPO_PUBLIC_API_URL;
   }
   
-  // Development - use localhost or PC IP
+  // Default to production Render API
+  const PRODUCTION_API = 'https://donna-backend-oc7v.onrender.com';
+  
+  // Development mode - use local backend if specified, otherwise use production
   if (__DEV__) {
-    if (Platform.OS === 'web') {  
-      return 'http://localhost:8000';
-    }
-    
-    if (Platform.OS === 'android') {
-      // Check if running in emulator
-      if (Constants.isDevice === false) {
-        return 'http://10.0.2.2:8000'; // Android emulator -> host machine
+    // If you want to use local backend during development, set EXPO_PUBLIC_USE_LOCAL=true
+    if (process.env.EXPO_PUBLIC_USE_LOCAL === 'true') {
+      if (Platform.OS === 'web') {  
+        return 'http://localhost:8000';
       }
+      
+      if (Platform.OS === 'android') {
+        // Check if running in emulator
+        if (Constants.isDevice === false) {
+          return 'http://10.0.2.2:8000'; // Android emulator -> host machine
+        }
+      }
+      
+      // Physical device (iOS or Android) - use your PC's IP
+      return `http://${YOUR_PC_IP}:8000`;
     }
-    
-    // Physical device (iOS or Android) - use your PC's IP
-    return `http://${YOUR_PC_IP}:8000`;
   }
   
-  // Default to production (update with your Render URL)
-  return 'https://your-app-name.onrender.com';
+  // Default to production API
+  return PRODUCTION_API;
 };
 
 const API_BASE = getApiBase();

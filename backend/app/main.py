@@ -40,9 +40,7 @@ app = setup_rate_limiting(app)
 app.add_middleware(LoggingMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if settings.env == "development" else [
-        "https://your-domain.com",  # Add your production domains
-    ],
+    allow_origins=["*"],  # Allow all origins (can restrict later if needed)
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

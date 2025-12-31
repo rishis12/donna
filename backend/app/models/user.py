@@ -2,7 +2,7 @@ from sqlalchemy import Column, String, Boolean, DateTime
 from sqlalchemy.orm import relationship
 import uuid
 from datetime import datetime
-from ..core.database import Base
+from ..core.models_base import Base
 
 def generate_uuid():
     return str(uuid.uuid4())

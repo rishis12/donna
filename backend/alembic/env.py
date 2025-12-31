@@ -9,8 +9,8 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-# Import your models and Base
-from app.core.database import Base
+# Import your models and Base (use models_base to avoid engine creation)
+from app.core.models_base import Base
 from app.models.user import User
 from app.models.reminder import Reminder
 from app.models.messaging_account import MessagingAccount

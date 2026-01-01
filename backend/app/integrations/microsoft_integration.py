@@ -13,7 +13,8 @@ SCOPES = [
     "Mail.Send",
     "Mail.Read",  # For reading emails
     "Chat.Read",  # For reading Teams messages
-    "ChatMessage.Read"  # For reading Teams chat messages
+    "ChatMessage.Read",  # For reading Teams chat messages
+    "ChatMessage.Send"  # For sending Teams messages
 ]
 # Note: MSAL automatically adds openid, profile, offline_access, and email scopes
 GRAPH_URL = "https://graph.microsoft.com/v1.0"

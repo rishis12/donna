@@ -30,7 +30,7 @@ def upgrade() -> None:
     )
     op.create_index(op.f('ix_user_history_timestamp'), 'user_history', ['timestamp'], unique=False)
     op.create_index(op.f('ix_user_history_user_id'), 'user_history', ['user_id'], unique=False)
-    op.add_column('users', sa.Column('onboarding_complete', sa.Boolean(), nullable=True, server_default=sa.text('0')))
+    op.add_column('users', sa.Column('onboarding_complete', sa.Boolean(), nullable=True, server_default=sa.text('false')))
     op.add_column('users', sa.Column('slack_access_token', sa.Text(), nullable=True))
     op.alter_column('users', 'google_access_token',
                existing_type=sa.VARCHAR(),

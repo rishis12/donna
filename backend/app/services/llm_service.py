@@ -22,10 +22,20 @@ Use ONLY when user clearly requests multiple separate actions.{"actions":[{"inte
 5. For deleting emails: If user says "delete emails" or "delete X emails" or "delete emails from [label]" → use "delete_emails" intent. Include "delete_count" for number of emails, "label" for inbox/label (e.g., "Promotions" or "category_promotions"), "subject_search" for subject text to search, "email_ids" for specific email IDs, or set all to null to delete matching criteria. Set "permanent": true for permanent deletion (defaults to false/trash).
 6. For Slack messages: If user wants to send a message to Slack (e.g., "send a message to #channel", "post to Slack", "message #channel-name") → use "send_slack_message" intent. Extract "channel" (channel name like "#general" or channel ID), "channel_id" (if provided as ID), and "message" or "slack_message" (the message content). Channel can be specified as "#channel-name" or just "channel-name" (without #). If channel is not specified, ask for clarification. requires_confirmation = TRUE for sending Slack messages.
 7. Confirmation behavior: requires_confirmation = TRUE for actions that modify calendar, send email, send Slack messages, or delete emails. requires_confirmation = FALSE when clarifying, answering conversationally, or for read-only operations like listing reminders or marking emails as read.
-6. ALWAYS output strictly valid JSON. No markdown, no commentary outside JSON.
-7. Use LOCAL TIMEZONE and CURRENT_TIME from context for all time reasoning. Interpret natural language times ("in 30 mins", "tomorrow at 3", "next Friday morning"). IMPORTANT: Relative times like "in 30 seconds", "in 1 minute", "in 5 minutes" are ALWAYS in the future - accept them!
-8. If user gives multiple event operations in one request → use MULTI-ACTION format.
-9. Make sure to always check the current time before scheduling or moving events and reminders.
+8. ALWAYS output strictly valid JSON. No markdown, no commentary outside JSON.
+9. TIME PARSING RULES (CRITICAL):
+   - Use LOCAL TIMEZONE and CURRENT_TIME from context for all time reasoning
+   - For relative times: "in X minutes/hours" = CURRENT_TIME + X minutes/hours. Calculate the exact future time.
+   - For "in 5 minutes" → add 5 minutes to CURRENT_TIME, format as ISO8601
+   - For "in 30 minutes" → add 30 minutes to CURRENT_TIME
+   - For "tomorrow at 3pm" → next day at 3:00 PM in user's timezone
+   - For "next Friday at 2pm" → next occurrence of Friday at 2:00 PM
+   - NEVER default to 8am or any arbitrary time. If time is unclear, ask for clarification.
+   - If user says "schedule a meeting" without time → use request_clarification, DO NOT default to 8am
+   - Always calculate times relative to CURRENT_TIME provided in the context
+   - Examples: "in 10 minutes" when CURRENT_TIME is 2:30 PM → time should be "2025-01-22T14:40:00" (2:40 PM)
+10. If user gives multiple event operations in one request → use MULTI-ACTION format.
+11. Make sure to always check the current time before scheduling or moving events and reminders.
 ### VALID EXAMPLES
 {"intent":"create_reminder","entities":{"reminder_text":"call mom","time":"2025-01-22T18:00:00"},"response":"I'll remind you at 6pm.","requires_confirmation":true}
 {"intent":"draft_email","entities":{"to":"sarah@example.com","subject":"Update","body":"Just checking in."},"response":"Draft ready — should I send it?","requires_confirmation":true}
@@ -64,7 +74,32 @@ async def parse_utterance(utterance: str, current_time: str, conversation_histor
         readable_local_time = local_now.strftime("%A, %B %d, %Y at %I:%M:%S %p")
         iso_local_time = local_now.isoformat()
 
-        time_context = f"CURRENT TIME (VERY IMPORTANT): Local time ({timezone}): {readable_local_time}. ISO: {iso_local_time}. ALWAYS express times in user's timezone ({timezone}), not UTC. When calculating relative times (e.g., 'in 30 seconds', 'in 1 minute', 'tomorrow at 5pm'), use the Local time as your reference. IMPORTANT: 'in X seconds/minutes/hours' means X time units FROM NOW (the current local time above), which is in the FUTURE. DO NOT schedule or create reminders for times that are in the past relative to the current local time above. However, relative times like 'in 30 seconds' or 'in 1 minute' are ALWAYS in the future and should be accepted."
+        # Calculate example times for better context
+        from datetime import timedelta
+        example_5min = (local_now + timedelta(minutes=5)).isoformat()
+        example_30min = (local_now + timedelta(minutes=30)).isoformat()
+        example_1hour = (local_now + timedelta(hours=1)).isoformat()
+        
+        time_context = f"""
+CURRENT TIME (CRITICAL - USE THIS FOR ALL TIME CALCULATIONS):
+- Local timezone: {timezone}
+- Current local time: {readable_local_time}
+- Current ISO time: {iso_local_time}
+
+TIME CALCULATION EXAMPLES (calculate relative to current time above):
+- "in 5 minutes" → {example_5min}
+- "in 30 minutes" → {example_30min}
+- "in 1 hour" → {example_1hour}
+- "tomorrow at 3pm" → next day at 15:00:00 in {timezone}
+- "next Friday at 2pm" → next Friday at 14:00:00 in {timezone}
+
+CRITICAL RULES:
+1. For "in X minutes/hours": Add X to {iso_local_time}. NEVER default to 8am or any time.
+2. If time is missing/unclear → use request_clarification intent, DO NOT guess or default.
+3. ALWAYS output times in ISO8601 format: YYYY-MM-DDTHH:MM:SS (with timezone if needed)
+4. All times must be FUTURE relative to {readable_local_time}
+5. When user says "schedule a meeting" without time → ask "What time?" using request_clarification
+"""
         full_context = SYSTEM_PROMPT + time_context + calendar_context
         messages = [
             {"role": "system", "content": full_context}

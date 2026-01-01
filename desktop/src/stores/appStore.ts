@@ -52,6 +52,7 @@ interface AppState {
   isRecording: boolean
   isMiniMode: boolean
   widgetMode: 'chat' | 'todos'
+  shownReminderIds: Set<string> // Track shown reminders to prevent duplicates
   
   // Actions
   login: (email: string, password: string) => Promise<void>
@@ -96,6 +97,7 @@ export const useAppStore = create<AppState>()(
       isRecording: false,
       isMiniMode: false,
       widgetMode: 'chat',
+      shownReminderIds: new Set<string>(),
 
       login: async (email, password) => {
         const response = await api.post('/auth/login', { email, password })
@@ -408,31 +410,42 @@ export const useAppStore = create<AppState>()(
         try {
           const response = await api.get('/reminders/due?within_minutes=1')
           const dueReminders = response.reminders
+          const state = get()
+          
+          // Initialize Set if it doesn't exist (for persistence compatibility)
+          let shownIds = state.shownReminderIds || new Set<string>()
           
           for (const reminder of dueReminders) {
+            // Skip if we've already shown this reminder
+            if (shownIds.has(reminder.id)) {
+              continue
+            }
+            
+            // Mark as shown
+            shownIds.add(reminder.id)
+            set({ shownReminderIds: new Set(shownIds) })
+            
             const timestamp = new Date().toLocaleTimeString()
             console.log(`\n🔔 [REMINDER - ${timestamp}]`)
             console.log(`   ${reminder.text}`)
-            console.log(`   Due: ${new Date(reminder.due_time).toLocaleString()}`)
+            // Parse UTC datetime correctly - handle Z suffix
+            const dueTimeStr = typeof reminder.due_time === 'string' && reminder.due_time.endsWith('Z')
+              ? reminder.due_time 
+              : typeof reminder.due_time === 'string' 
+                ? reminder.due_time + 'Z'
+                : reminder.due_time
+            console.log(`   Due: ${new Date(dueTimeStr).toLocaleString()}`)
             console.log('─'.repeat(50))
             
-            // Send desktop notification using Tauri v1.5 API
+            // Send desktop notification using Tauri notification API
             try {
-              // Try Tauri v1.5 notification API
               const { sendNotification } = await import('@tauri-apps/api/notification')
               await sendNotification({
                 title: '🔔 Reminder',
                 body: reminder.text
               })
             } catch (notifError) {
-              // Fallback: try window API
-              try {
-                const { getCurrentWindow } = await import('@tauri-apps/api/window')
-                const window = getCurrentWindow()
-                await window.requestUserAttention(1) // Request attention
-              } catch (err) {
-                console.error('Failed to send notification:', notifError, err)
-              }
+              console.error('Failed to send notification:', notifError)
             }
           }
         } catch (error) {

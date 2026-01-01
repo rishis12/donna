@@ -67,10 +67,12 @@ async def get_daily_digest(
     reminders = []
     for r in all_reminders:
         if r.due_time.date() == today:
+            # Append Z to indicate UTC timezone for proper client-side parsing
+            due_time_iso = r.due_time.isoformat() + "Z"
             reminders.append({
                 "id": str(r.id),
                 "text": r.text,
-                "dueTime": r.due_time.isoformat()
+                "dueTime": due_time_iso
             })
     
     # Get email and Teams message counts and summaries
@@ -185,7 +187,12 @@ def _generate_digest_summary(meetings: list, reminders: list, unread_emails: int
         if len(reminders) == 1:
             reminder = reminders[0]
             try:
-                due_dt = datetime.fromisoformat(reminder.get("dueTime", ""))
+                due_time_str = reminder.get("dueTime", "")
+                # Handle both with and without Z suffix
+                if due_time_str.endswith('Z'):
+                    due_dt = datetime.fromisoformat(due_time_str.replace('Z', '+00:00'))
+                else:
+                    due_dt = datetime.fromisoformat(due_time_str)
                 time_str = due_dt.strftime('%I:%M %p')
                 parts.append(f"1 reminder at {time_str}: {reminder.get('text', '')}")
             except:

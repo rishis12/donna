@@ -113,6 +113,8 @@ async def execute_single_action(db: AsyncSession, user: User, intent: str, entit
         return await execute_delete_emails(user, entities)
     elif intent == "send_slack_message":
         return await execute_send_slack_message(db, user, entities)
+    elif intent == "send_teams_message":
+        return await execute_send_teams_message(user, entities)
     else:
         raise Exception(f"Unknown intent: {intent}")
 
@@ -527,6 +529,49 @@ async def execute_send_slack_message(db: AsyncSession, user: User, entities: dic
             raise Exception("Slack authentication failed. Please reconnect your Slack account.")
         else:
             raise Exception(f"Failed to send Slack message: {error_msg}")
+
+
+async def execute_send_teams_message(user: User, entities: dict) -> dict:
+    """Send a message to a Microsoft Teams chat."""
+    # Get message content
+    message = entities.get("message") or entities.get("teams_message") or entities.get("body")
+    if not message:
+        raise Exception("Message content is required. What would you like to send to Teams?")
+    
+    # Get chat ID (required for Teams)
+    chat_id = entities.get("chat_id")
+    if not chat_id:
+        raise Exception("Teams chat ID is required. Which Teams chat should I send the message to? (You can find the chat ID in the Teams URL or by listing your chats)")
+    
+    # Check if Microsoft is connected
+    if not user.microsoft_access_token:
+        raise Exception("Microsoft Teams is not connected. Please connect your Microsoft account in Settings.")
+    
+    # Send the message
+    try:
+        result = await microsoft_integration.send_teams_message(
+            user.microsoft_access_token,
+            chat_id,
+            message
+        )
+        
+        return {
+            "status": "sent",
+            "chat_id": chat_id,
+            "message": message,
+            "message_id": result.get("message_id"),
+            "response": "Message sent to Teams chat successfully."
+        }
+        
+    except Exception as e:
+        # Provide helpful error messages
+        error_msg = str(e)
+        if "401" in error_msg or "403" in error_msg or "InvalidAuthenticationToken" in error_msg:
+            raise Exception("Microsoft authentication failed. Please reconnect your Microsoft account.")
+        elif "404" in error_msg or "NotFound" in error_msg:
+            raise Exception(f"Teams chat '{chat_id}' not found. Please check the chat ID and try again.")
+        else:
+            raise Exception(f"Failed to send Teams message: {error_msg}")
 
     
 

@@ -371,3 +371,48 @@ async def get_teams_message_count(access_token: str, unread_only: bool = False) 
             print(f"Error fetching Teams message count: {e}")
             return 0
 
+# Microsoft Teams message sending function
+async def send_teams_message(
+    access_token: str,
+    chat_id: str,
+    message: str
+) -> dict:
+    """
+    Send a message to a Microsoft Teams chat using Microsoft Graph API.
+    
+    Args:
+        access_token: Encrypted Microsoft access token
+        chat_id: The ID of the Teams chat to send the message to
+        message: The message content to send
+        
+    Returns:
+        dict with message ID and status
+    """
+    async with httpx.AsyncClient() as client:
+        decrypted_token = decrypt_token(access_token)
+        headers = {
+            "Authorization": f"Bearer {decrypted_token}",
+            "Content-Type": "application/json"
+        }
+        
+        # Format message body for Teams
+        message_body = {
+            "body": {
+                "contentType": "text",
+                "content": message
+            }
+        }
+        
+        response = await client.post(
+            f"{GRAPH_URL}/me/chats/{chat_id}/messages",
+            headers=headers,
+            json=message_body
+        )
+        response.raise_for_status()
+        result = response.json()
+        
+        return {
+            "message_id": result.get("id"),
+            "chat_id": chat_id,
+            "status": "sent"
+        }

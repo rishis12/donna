@@ -15,6 +15,7 @@ from app.models.user import User
 from app.models.reminder import Reminder
 from app.models.messaging_account import MessagingAccount
 from app.models.interaction import Interaction
+from app.models.user_history import UserHistory
 
 # this is the Alembic Config object
 config = context.config

@@ -1,11 +1,12 @@
 import { useEffect, useRef } from 'react'
 import CommandWindow from './components/CommandWindow'
 import LoginForm from './components/LoginForm'
+import Onboarding from './components/Onboarding'
 import MiniWidget from './components/MiniWidget'
 import { useAppStore } from './stores/appStore'
 
 function App() {
-  const { isAuthenticated, checkAuth, pollDueReminders, isMiniMode } = useAppStore()
+  const { isAuthenticated, user, checkAuth, pollDueReminders, isMiniMode } = useAppStore()
   const pollIntervalRef = useRef<number | null>(null)
 
   useEffect(() => {
@@ -46,7 +47,13 @@ function App() {
       
       {/* Main content */}
       <div className="relative z-10 flex items-center justify-center min-h-screen p-6">
-        {isAuthenticated ? <CommandWindow /> : <LoginForm />}
+        {!isAuthenticated ? (
+          <LoginForm />
+        ) : user && !user.onboardingComplete ? (
+          <Onboarding />
+        ) : (
+          <CommandWindow />
+        )}
       </div>
     </div>
   )

@@ -1,6 +1,6 @@
 from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text
 from sqlalchemy.orm import relationship
-from datetime import datetime, timezone
+from datetime import datetime
 from ..core.models_base import Base
 
 class MessagingAccount(Base):
@@ -27,8 +27,8 @@ class MessagingAccount(Base):
     is_webhook_active = Column(Boolean, default=False)
 
     # Metadata
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationship
     user = relationship("User", back_populates="messaging_accounts")

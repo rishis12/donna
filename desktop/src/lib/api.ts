@@ -17,18 +17,26 @@ class ApiClient {
       headers['Authorization'] = `Bearer ${this.token}`
     }
 
-    const response = await fetch(`${API_BASE}${path}`, {
-      method,
-      headers,
-      body: body ? JSON.stringify(body) : undefined
-    })
+    try {
+      const response = await fetch(`${API_BASE}${path}`, {
+        method,
+        headers,
+        body: body ? JSON.stringify(body) : undefined
+      })
 
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ detail: 'Request failed' }))
-      throw new Error(error.detail || 'Request failed')
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Request failed' }))
+        throw new Error(error.detail || 'Request failed')
+      }
+
+      return response.json()
+    } catch (error: any) {
+      // Handle network errors (backend not running, CORS, etc.)
+      if (error.name === 'TypeError' && error.message.includes('fetch')) {
+        throw new Error(`Cannot connect to backend at ${API_BASE}. Make sure the backend server is running.`)
+      }
+      throw error
     }
-
-    return response.json()
   }
 
   get(path: string) {

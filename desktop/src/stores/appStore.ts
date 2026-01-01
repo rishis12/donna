@@ -43,7 +43,7 @@ interface DailyDigest {
 interface AppState {
   isAuthenticated: boolean
   token: string | null
-  user: { email: string; googleConnected: boolean; microsoftConnected: boolean; slackConnected: boolean } | null
+  user: { email: string; googleConnected: boolean; microsoftConnected: boolean; slackConnected: boolean; onboardingComplete: boolean } | null
   messages: Message[]
   reminders: Reminder[]
   todos: TodoItem[]
@@ -58,7 +58,8 @@ interface AppState {
   register: (email: string, password: string) => Promise<void>
   loginWithToken: (token: string) => Promise<void>
   logout: () => void
-  checkAuth: () => void
+  checkAuth: () => Promise<void>
+  completeOnboarding: () => Promise<void>
   sendMessage: (text: string) => Promise<void>
   confirmAction: (actionId: string, confirmed: boolean) => Promise<void>
   sendEmail: (to: string, subject: string, body: string) => Promise<void>
@@ -115,7 +116,8 @@ export const useAppStore = create<AppState>()(
             email: user.email, 
             googleConnected: user.google_connected,
             microsoftConnected: user.microsoft_connected,
-            slackConnected: user.slack_connected 
+            slackConnected: user.slack_connected,
+            onboardingComplete: user.onboarding_complete || false
           },
           messages: [greeting]
         })
@@ -128,11 +130,13 @@ export const useAppStore = create<AppState>()(
           token: response.access_token 
         })
         api.setToken(response.access_token)
+        const user = response.user || await api.get('/auth/me')
         set({ user: { 
-          email, 
-          googleConnected: false,
-          microsoftConnected: false,
-          slackConnected: false 
+          email: user.email || email, 
+          googleConnected: user.google_connected || false,
+          microsoftConnected: user.microsoft_connected || false,
+          slackConnected: user.slack_connected || false,
+          onboardingComplete: user.onboarding_complete || false
         }})
       },
 
@@ -152,7 +156,9 @@ export const useAppStore = create<AppState>()(
             user: { 
               email: user.email, 
               googleConnected: user.google_connected,
-              microsoftConnected: user.microsoft_connected 
+              microsoftConnected: user.microsoft_connected,
+              slackConnected: user.slack_connected,
+              onboardingComplete: user.onboarding_complete || false
             },
             messages: [greeting]
           })
@@ -167,11 +173,37 @@ export const useAppStore = create<AppState>()(
         api.setToken(null)
       },
 
-      checkAuth: () => {
+      checkAuth: async () => {
         const { token } = get()
         if (token) {
           api.setToken(token)
-          set({ isAuthenticated: true })
+          try {
+            const user = await api.get('/auth/me')
+            set({ 
+              isAuthenticated: true,
+              user: {
+                email: user.email,
+                googleConnected: user.google_connected,
+                microsoftConnected: user.microsoft_connected,
+                slackConnected: user.slack_connected,
+                onboardingComplete: user.onboarding_complete || false
+              }
+            })
+          } catch (error) {
+            // Token is invalid, clear it
+            api.setToken(null)
+            set({ isAuthenticated: false, token: null, user: null })
+          }
+        }
+      },
+      
+      completeOnboarding: async () => {
+        await api.post('/onboarding/complete')
+        const { user } = get()
+        if (user) {
+          set({ 
+            user: { ...user, onboardingComplete: true }
+          })
         }
       },
 
@@ -464,7 +496,8 @@ export const useAppStore = create<AppState>()(
             email: user.email, 
             googleConnected: user.google_connected,
             microsoftConnected: user.microsoft_connected,
-            slackConnected: user.slack_connected 
+            slackConnected: user.slack_connected,
+            onboardingComplete: user.onboarding_complete || false
           }})
         } catch (error) {
           console.error('Failed to refresh user:', error)

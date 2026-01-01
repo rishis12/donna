@@ -16,6 +16,7 @@ interface User {
   googleConnected: boolean;
   microsoftConnected: boolean;
   slackConnected: boolean;
+  onboardingComplete: boolean;
 }
 
 interface CalendarEvent {
@@ -54,6 +55,7 @@ interface AppState {
   register: (email: string, password: string) => Promise<void>;
   loginWithToken: (token: string) => Promise<void>;
   refreshUser: () => Promise<void>;
+  completeOnboarding: () => Promise<void>;
   logout: () => void;
   sendMessage: (text: string) => Promise<void>;
   confirmAction: (actionId: string, confirmed: boolean) => Promise<void>;
@@ -95,6 +97,7 @@ export const useAppStore = create<AppState>((set, get) => ({
             googleConnected: user.google_connected,
             microsoftConnected: user.microsoft_connected,
             slackConnected: user.slack_connected,
+            onboardingComplete: user.onboarding_complete || false,
           },
           messages: [createGreeting()],
           isLoading: false,
@@ -111,13 +114,15 @@ export const useAppStore = create<AppState>((set, get) => ({
   login: async (email, password) => {
     const response = await api.post('/auth/login', { email, password });
     api.setToken(response.access_token);
-    const user = await api.get('/auth/me');
+    const user = response.user || await api.get('/auth/me');
     set({
       isAuthenticated: true,
       user: {
         email: user.email,
         googleConnected: user.google_connected,
         microsoftConnected: user.microsoft_connected,
+        slackConnected: user.slack_connected,
+        onboardingComplete: user.onboarding_complete || false,
       },
       messages: [createGreeting()],
     });
@@ -126,9 +131,16 @@ export const useAppStore = create<AppState>((set, get) => ({
   register: async (email, password) => {
     const response = await api.post('/auth/register', { email, password });
     api.setToken(response.access_token);
+    const user = response.user || await api.get('/auth/me');
     set({
       isAuthenticated: true,
-      user: { email, googleConnected: false, microsoftConnected: false, slackConnected: false },
+      user: {
+        email: user.email || email,
+        googleConnected: user.google_connected || false,
+        microsoftConnected: user.microsoft_connected || false,
+        slackConnected: user.slack_connected || false,
+        onboardingComplete: user.onboarding_complete || false,
+      },
       messages: [createGreeting()],
     });
   },
@@ -143,12 +155,24 @@ export const useAppStore = create<AppState>((set, get) => ({
           email: user.email,
           googleConnected: user.google_connected,
           microsoftConnected: user.microsoft_connected,
+          slackConnected: user.slack_connected,
+          onboardingComplete: user.onboarding_complete || false,
         },
         messages: [createGreeting()],
       });
     } catch (error) {
       api.setToken(null);
       throw error;
+    }
+  },
+  
+  completeOnboarding: async () => {
+    await api.post('/onboarding/complete');
+    const { user } = get();
+    if (user) {
+      set({
+        user: { ...user, onboardingComplete: true },
+      });
     }
   },
 
@@ -160,6 +184,8 @@ export const useAppStore = create<AppState>((set, get) => ({
           email: user.email,
           googleConnected: user.google_connected,
           microsoftConnected: user.microsoft_connected,
+          slackConnected: user.slack_connected,
+          onboardingComplete: user.onboarding_complete || false,
         },
       });
     } catch (error) {

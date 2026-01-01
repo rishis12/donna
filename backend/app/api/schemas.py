@@ -16,11 +16,13 @@ class UserLogin(BaseModel):
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    user: Optional["UserResponse"] = None
 
 class UserResponse(BaseModel):
     id: UUID
     email: str
     is_active: bool
+    onboarding_complete: bool = False
     google_connected: bool = False
     microsoft_connected: bool = False
     slack_connected: bool = False
@@ -132,4 +134,27 @@ class MessagingMessageSend(BaseModel):
     channel_id: Optional[str] = None
     message: str
     thread_id: Optional[str] = None
+
+# Onboarding schemas
+class OnboardingStatusResponse(BaseModel):
+    onboarding_complete: bool
+
+# History schemas
+class HistoryEntryCreate(BaseModel):
+    message: str
+    intent: Optional[str] = None
+    metadata: Optional[dict] = None
+
+class HistoryEntryResponse(BaseModel):
+    id: UUID
+    message: str
+    intent: Optional[str] = None
+    metadata: Optional[dict] = None  # Maps to meta_data in DB
+    timestamp: datetime
+    
+    class Config:
+        from_attributes = True
+
+class HistoryListResponse(BaseModel):
+    entries: List[HistoryEntryResponse]
 

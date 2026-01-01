@@ -6,7 +6,7 @@ from .core.database import init_db
 from .core.middleware import LoggingMiddleware, setup_rate_limiting, limiter
 from .core.scheduler import start_scheduler, shutdown_scheduler
 from .api.routes import auth, utterance, reminders, calendar, email, action, digest, messages, summary
-from .api.routes import messaging_accounts, webhook
+from .api.routes import messaging_accounts, webhook, onboarding, history
 from .core.config import get_settings
 from sqlalchemy import select
 
@@ -58,6 +58,8 @@ app.include_router(messages.router)
 app.include_router(summary.router)
 app.include_router(messaging_accounts.router)
 app.include_router(webhook.router)
+app.include_router(onboarding.router)
+app.include_router(history.router)
 
 @app.get("/")
 async def root():

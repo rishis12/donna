@@ -3,6 +3,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from ..schemas import UserCreate, UserLogin, Token, UserResponse
+from typing import Optional
 from ...core.database import get_db
 from ...core.security import get_password_hash, verify_password, create_access_token, decode_access_token
 from ...models.user import User
@@ -10,11 +11,31 @@ from ...integrations import google_integration, microsoft_integration
 from ...integrations.slack_integration import get_auth_url as get_slack_auth_url, exchange_code as exchange_slack_code, get_user_info as get_slack_user_info
 from ...models.messaging_account import MessagingAccount
 from ..deps import get_current_user
-from typing import Optional
 import json
 import base64
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+async def build_user_response(user: User, db: AsyncSession) -> UserResponse:
+    """Helper function to build UserResponse from User model."""
+    # Check if user has active Slack account
+    slack_result = await db.execute(
+        select(MessagingAccount)
+        .where(MessagingAccount.user_id == user.id)
+        .where(MessagingAccount.platform == "slack")
+        .where(MessagingAccount.is_active == True)
+    )
+    slack_connected = slack_result.scalar_one_or_none() is not None
+    
+    return UserResponse(
+        id=user.id,
+        email=user.email,
+        is_active=user.is_active,
+        onboarding_complete=user.onboarding_complete or False,
+        google_connected=bool(user.google_access_token),
+        microsoft_connected=bool(user.microsoft_access_token),
+        slack_connected=slack_connected
+    )
 
 # HTML template for OAuth callback - sends token back to desktop app
 OAUTH_SUCCESS_HTML = """
@@ -122,7 +143,8 @@ async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     await db.refresh(user)
     
     token = create_access_token({"sub": str(user.id)})
-    return Token(access_token=token)
+    user_response = await build_user_response(user, db)
+    return Token(access_token=token, user=user_response)
 
 # Traditional email/password login (optional)
 @router.post("/login", response_model=Token)
@@ -144,27 +166,12 @@ async def login(user_data: UserLogin, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     
     token = create_access_token({"sub": str(user.id)})
-    return Token(access_token=token)
+    user_response = await build_user_response(user, db)
+    return Token(access_token=token, user=user_response)
 
 @router.get("/me", response_model=UserResponse)
 async def get_me(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    # Check if user has active Slack account
-    slack_result = await db.execute(
-        select(MessagingAccount)
-        .where(MessagingAccount.user_id == user.id)
-        .where(MessagingAccount.platform == "slack")
-        .where(MessagingAccount.is_active == True)
-    )
-    slack_connected = slack_result.scalar_one_or_none() is not None
-    
-    return UserResponse(
-        id=user.id,
-        email=user.email,
-        is_active=user.is_active,
-        google_connected=bool(user.google_access_token),
-        microsoft_connected=bool(user.microsoft_access_token),
-        slack_connected=slack_connected
-    )
+    return await build_user_response(user, db)
 
 # ============================================
 # Google OAuth

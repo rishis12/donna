@@ -11,7 +11,7 @@ const colors = {
 };
 
 export default function RootLayout() {
-  const { init, isAuthenticated, isLoading } = useAppStore();
+  const { init, isAuthenticated, isLoading, user } = useAppStore();
   const router = useRouter();
   const segments = useSegments();
 
@@ -23,13 +23,27 @@ export default function RootLayout() {
     if (isLoading) return;
 
     const inAuthGroup = segments[0] === '(tabs)';
+    const onOnboarding = segments[0] === 'onboarding';
+    const onLogin = segments[0] === 'login';
 
-    if (isAuthenticated && !inAuthGroup) {
-      router.replace('/(tabs)');
-    } else if (!isAuthenticated && inAuthGroup) {
-      router.replace('/login');
+    if (!isAuthenticated) {
+      if (inAuthGroup || onOnboarding) {
+        router.replace('/login');
+      }
+    } else if (isAuthenticated && user) {
+      // Check if onboarding is needed
+      if (!user.onboardingComplete) {
+        if (inAuthGroup || onLogin) {
+          router.replace('/onboarding');
+        }
+      } else {
+        // Onboarding complete, redirect to tabs if needed
+        if (onLogin || onOnboarding) {
+          router.replace('/(tabs)');
+        }
+      }
     }
-  }, [isAuthenticated, isLoading, segments]);
+  }, [isAuthenticated, isLoading, segments, user]);
 
   if (isLoading) {
     return <View style={{ flex: 1, backgroundColor: colors.background }} />;
@@ -48,6 +62,7 @@ export default function RootLayout() {
       >
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="login" options={{ headerShown: false }} />
+        <Stack.Screen name="onboarding" options={{ headerShown: false }} />
       </Stack>
     </>
   );

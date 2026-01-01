@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pydantic import BaseModel, EmailStr
 from typing import Optional, List
 from datetime import datetime
@@ -13,11 +15,6 @@ class UserLogin(BaseModel):
     email: EmailStr
     password: str
 
-class Token(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-    user: Optional["UserResponse"] = None
-
 class UserResponse(BaseModel):
     id: UUID
     email: str
@@ -26,6 +23,11 @@ class UserResponse(BaseModel):
     google_connected: bool = False
     microsoft_connected: bool = False
     slack_connected: bool = False
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: Optional[UserResponse] = None
 
 # Utterance schemas
 class UtteranceRequest(BaseModel):

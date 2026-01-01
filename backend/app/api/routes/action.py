@@ -134,8 +134,12 @@ async def execute_create_reminder(db: AsyncSession, user: User, entities: dict) 
     except Exception as e:
         raise Exception(f"Could not parse time '{time_str}'. Please specify a valid date and time.")
     
+    # Convert to UTC and remove timezone info (database uses TIMESTAMP WITHOUT TIME ZONE)
+    if due_time.tzinfo is not None:
+        due_time = due_time.astimezone(timezone.utc).replace(tzinfo=None)
+    
     # Validate time is in the future
-    if due_time <= datetime.now(due_time.tzinfo) if due_time.tzinfo else datetime.now(timezone.utc):
+    if due_time <= datetime.utcnow():
         raise Exception("Reminder time must be in the future. Please specify a future time.")
     
     reminder = await reminder_service.create_reminder(

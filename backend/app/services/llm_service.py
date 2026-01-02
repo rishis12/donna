@@ -358,7 +358,8 @@ async def transcribe_audio(audio_data: bytes) -> str:
 def _post_process_summary(summary: str, max_lines: int = 8) -> str:
     """
     Post-process LLM summary text:
-    - Insert line breaks between sentences
+    - Preserve bullet points and line structure
+    - Insert line breaks between sentences if needed
     - Preserve **bold** formatting
     - Trim to max lines
     """
@@ -367,12 +368,31 @@ def _post_process_summary(summary: str, max_lines: int = 8) -> str:
     
     import re
     
-    # Normalize whitespace: replace multiple spaces/newlines with single space
-    # This ensures consistent processing while preserving bold markers
+    # First, check if summary already has line breaks (bullet points or structured format)
+    lines = summary.split('\n')
+    
+    # If we have multiple lines, preserve the structure
+    if len(lines) > 1:
+        # Clean up each line but preserve structure
+        processed_lines = []
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            # Preserve bullet markers (•, -, *) and formatting
+            processed_lines.append(line)
+        
+        # Limit to max_lines
+        if len(processed_lines) > max_lines:
+            processed_lines = processed_lines[:max_lines]
+        
+        return '\n'.join(processed_lines)
+    
+    # If single line or no clear structure, split on sentences
+    # Normalize whitespace: replace multiple spaces with single space
     normalized = re.sub(r'\s+', ' ', summary.strip())
     
     # Split into sentences: split on sentence endings (. ! ?) followed by space
-    # Pattern uses positive lookbehind to keep the punctuation with the sentence
     sentences = re.split(r'(?<=[.!?])\s+', normalized)
     
     # Filter out empty sentences and strip whitespace

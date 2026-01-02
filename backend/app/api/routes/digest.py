@@ -18,7 +18,8 @@ async def get_daily_digest(
 ):
     """Get daily digest: today's meetings, active reminders, and inbox summary."""
     
-    today = datetime.now().date()
+    # Use UTC for date comparison to match reminder storage (reminders stored in UTC)
+    today = datetime.utcnow().date()
     tomorrow = today + timedelta(days=1)
     
     # Get today's calendar events

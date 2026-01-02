@@ -110,7 +110,14 @@ CRITICAL RULES:
 4. All times must be FUTURE relative to {readable_local_time}
 5. When user says "schedule a meeting" without time → ask "What time?" using request_clarification
 """
-        memories = await db.run_sync(lambda sync_db: get_active_memories_for_user(sync_db, user_id))
+        # Fetch user memories if db is available
+        memories = []
+        if db and user_id:
+            try:
+                memories = await db.run_sync(lambda sync_db: get_active_memories_for_user(sync_db, user_id))
+            except Exception as e:
+                print(f"Error fetching user memories: {e}")
+                memories = []
         memory_context = render_memory_context(memories)
         
         full_context = SYSTEM_PROMPT + time_context + calendar_context + memory_context

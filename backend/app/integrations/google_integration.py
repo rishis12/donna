@@ -78,7 +78,7 @@ def get_credentials(access_token: str, refresh_token: Optional[str] = None) -> C
 # Calendar functions
 async def list_events(access_token: str, refresh_token: str, max_results: int = 10) -> List[dict]:
     creds = get_credentials(access_token, refresh_token)
-    service = build("calendar", "v3", credentials=creds)
+    service = build("calendar", "v3", credentials=creds, cache_discovery=False)
     
     now = datetime.utcnow().isoformat() + "Z"
     events_result = service.events().list(
@@ -101,7 +101,7 @@ async def create_event(
     description: str = ""
 ) -> dict:
     creds = get_credentials(access_token, refresh_token)
-    service = build("calendar", "v3", credentials=creds)
+    service = build("calendar", "v3", credentials=creds, cache_discovery=False)
     
     event = {
         "summary": summary,
@@ -122,7 +122,7 @@ async def update_event(
     updates: dict
 ) -> dict:
     creds = get_credentials(access_token, refresh_token)
-    service = build("calendar", "v3", credentials=creds)
+    service = build("calendar", "v3", credentials=creds, cache_discovery=False)
     
     # Get the existing event
     event = service.events().get(calendarId="primary", eventId=event_id).execute()
@@ -143,7 +143,7 @@ async def add_attendees_to_event(
 ) -> dict:
     """Add attendees to an existing event."""
     creds = get_credentials(access_token, refresh_token)
-    service = build("calendar", "v3", credentials=creds)
+    service = build("calendar", "v3", credentials=creds, cache_discovery=False)
     
     # Get the existing event
     event = service.events().get(calendarId="primary", eventId=event_id).execute()
@@ -173,7 +173,7 @@ async def cancel_event(
 ) -> dict:
     """Cancel/delete a calendar event."""
     creds = get_credentials(access_token, refresh_token)
-    service = build("calendar", "v3", credentials=creds)
+    service = build("calendar", "v3", credentials=creds, cache_discovery=False)
     
     # Get event info before deleting for confirmation message
     try:
@@ -203,7 +203,7 @@ async def send_email(
     from email.mime.text import MIMEText
     
     creds = get_credentials(access_token, refresh_token)
-    service = build("gmail", "v1", credentials=creds)
+    service = build("gmail", "v1", credentials=creds, cache_discovery=False)
     
     message = MIMEText(body)
     message["to"] = to
@@ -223,7 +223,7 @@ async def create_draft(
     from email.mime.text import MIMEText
     
     creds = get_credentials(access_token, refresh_token)
-    service = build("gmail", "v1", credentials=creds)
+    service = build("gmail", "v1", credentials=creds, cache_discovery=False)
     
     message = MIMEText(body)
     message["to"] = to
@@ -272,7 +272,7 @@ async def list_emails(
     Fetch emails from Gmail.
     """
     creds = get_credentials(access_token, refresh_token)
-    service = build("gmail", "v1", credentials=creds)
+    service = build("gmail", "v1", credentials=creds, cache_discovery=False)
     
     query = "is:unread" if unread_only else ""
     results = service.users().messages().list(
@@ -312,7 +312,7 @@ async def get_email_count(access_token: str, refresh_token: str, unread_only: bo
     Uses pagination to get accurate count, with reasonable limits for performance.
     """
     creds = get_credentials(access_token, refresh_token)
-    service = build("gmail", "v1", credentials=creds)
+    service = build("gmail", "v1", credentials=creds, cache_discovery=False)
     
     query = "is:unread" if unread_only else ""
     
@@ -408,7 +408,7 @@ async def mark_emails_as_read(
     If mark_all is True, mark all unread emails as read.
     """
     creds = get_credentials(access_token, refresh_token)
-    service = build("gmail", "v1", credentials=creds)
+    service = build("gmail", "v1", credentials=creds, cache_discovery=False)
     
     if mark_all:
         # Get all unread email IDs
@@ -456,7 +456,7 @@ async def delete_emails(
     If permanent is True, permanently delete (defaults to False, which moves to trash).
     """
     creds = get_credentials(access_token, refresh_token)
-    service = build("gmail", "v1", credentials=creds)
+    service = build("gmail", "v1", credentials=creds, cache_discovery=False)
     
     # If no email_ids provided, search for emails to delete
     if not email_ids:

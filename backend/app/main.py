@@ -1,7 +1,9 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from contextlib import asynccontextmanager
 import logging
+from pathlib import Path
 from .core.database import init_db
 from .core.middleware import LoggingMiddleware, setup_rate_limiting, limiter
 from .core.scheduler import start_scheduler, shutdown_scheduler
@@ -61,13 +63,42 @@ app.include_router(webhook.router)
 app.include_router(onboarding.router)
 app.include_router(history.router)
 
+# Serve landing page
+# Try multiple paths to find landing.html (works in both local and deployed environments)
+_landing_paths = [
+    Path(__file__).parent / "landing.html",  # In app/ directory (deployed - copied by Dockerfile)
+    Path(__file__).parent.parent / "landing.html",  # In backend/ directory
+    Path(__file__).parent.parent.parent / "landing.html",  # Project root (local dev)
+]
+
+landing_page_path = None
+for path in _landing_paths:
+    if path.exists():
+        landing_page_path = path
+        logger.info(f"Found landing page at: {path}")
+        break
+
+if not landing_page_path:
+    logger.warning("Landing page not found. API info will be served at root.")
+
 @app.get("/")
 async def root():
+    """Serve landing page if available, otherwise return API info."""
+    if landing_page_path and landing_page_path.exists():
+        return FileResponse(landing_page_path, media_type="text/html")
     return {
         "message": "Desktop AI Agent API",
         "version": "1.0.0",
-        "status": "running"
+        "status": "running",
+        "landing_page": "/landing"
     }
+
+@app.get("/landing")
+async def landing():
+    """Serve the landing page."""
+    if landing_page_path and landing_page_path.exists():
+        return FileResponse(landing_page_path, media_type="text/html")
+    return {"error": "Landing page not found"}
 
 @app.get("/health")
 async def health():

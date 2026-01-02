@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Donna AI - Your Personal Executive Assistant</title>
+    <meta name="description" content="Download Donna AI, your intelligent personal assistant inspired by Donna Paulsen from Suits. Manage your calendar, emails, and tasks with confidence and style.">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary: #B89460;
+            --primary-light: #F7F3EE;
+            --primary-dark: #8B6F3D;
+            --background: #FAF8F5;
+            --surface: #FFFFFF;
+            --text: #443D35;
+            --text-muted: #9C8B78;
+            --border: #E8DFD3;
+            --success: #8B9A6F;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: var(--background);
+            color: var(--text);
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+
+        /* Header */
+        header {
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            padding: 20px 0;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+
+        nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--text);
+        }
+
+        .logo-emoji {
+            font-size: 32px;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 30px;
+            align-items: center;
+        }
+
+        .nav-links a {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+
+        .nav-links a:hover {
+            color: var(--primary);
+        }
+
+        /* Hero Section */
+        .hero {
+            padding: 80px 0 100px;
+            text-align: center;
+            background: linear-gradient(135deg, var(--primary-light) 0%, var(--background) 100%);
+        }
+
+        .hero h1 {
+            font-size: 64px;
+            font-weight: 700;
+            margin-bottom: 20px;
+            color: var(--text);
+            line-height: 1.2;
+        }
+
+        .hero .subtitle {
+            font-size: 24px;
+            color: var(--text-muted);
+            margin-bottom: 40px;
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .hero .tagline {
+            font-size: 18px;
+            color: var(--text-muted);
+            font-style: italic;
+            margin-bottom: 50px;
+        }
+
+        /* Download Buttons */
+        .download-section {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-bottom: 60px;
+        }
+
+        .download-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            padding: 16px 32px;
+            background: var(--primary);
+            color: white;
+            text-decoration: none;
+            border-radius: 12px;
+            font-weight: 600;
+            font-size: 16px;
+            transition: all 0.2s;
+            box-shadow: 0 4px 12px rgba(184, 148, 96, 0.3);
+        }
+
+        .download-btn:hover {
+            background: var(--primary-dark);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(184, 148, 96, 0.4);
+        }
+
+        .download-btn.secondary {
+            background: var(--surface);
+            color: var(--text);
+            border: 2px solid var(--border);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .download-btn.secondary:hover {
+            background: var(--primary-light);
+            border-color: var(--primary);
+        }
+
+        .platform-icon {
+            font-size: 24px;
+        }
+
+        /* Features Section */
+        .features {
+            padding: 80px 0;
+            background: var(--surface);
+        }
+
+        .section-title {
+            text-align: center;
+            font-size: 42px;
+            font-weight: 700;
+            margin-bottom: 60px;
+            color: var(--text);
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 40px;
+            margin-top: 60px;
+        }
+
+        .feature-card {
+            background: var(--background);
+            padding: 40px;
+            border-radius: 16px;
+            border: 1px solid var(--border);
+            transition: all 0.3s;
+        }
+
+        .feature-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+            border-color: var(--primary);
+        }
+
+        .feature-icon {
+            font-size: 48px;
+            margin-bottom: 20px;
+        }
+
+        .feature-card h3 {
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            color: var(--text);
+        }
+
+        .feature-card p {
+            color: var(--text-muted);
+            line-height: 1.8;
+        }
+
+        /* How It Works */
+        .how-it-works {
+            padding: 80px 0;
+            background: var(--background);
+        }
+
+        .steps {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 40px;
+            margin-top: 60px;
+        }
+
+        .step {
+            text-align: center;
+        }
+
+        .step-number {
+            width: 60px;
+            height: 60px;
+            background: var(--primary);
+            color: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            font-weight: 700;
+            margin: 0 auto 20px;
+        }
+
+        .step h3 {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            color: var(--text);
+        }
+
+        .step p {
+            color: var(--text-muted);
+        }
+
+        /* CTA Section */
+        .cta {
+            padding: 100px 0;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+            color: white;
+            text-align: center;
+        }
+
+        .cta h2 {
+            font-size: 48px;
+            font-weight: 700;
+            margin-bottom: 20px;
+        }
+
+        .cta p {
+            font-size: 20px;
+            margin-bottom: 40px;
+            opacity: 0.95;
+        }
+
+        /* Footer */
+        footer {
+            background: var(--surface);
+            border-top: 1px solid var(--border);
+            padding: 40px 0;
+            text-align: center;
+            color: var(--text-muted);
+        }
+
+        .footer-links {
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .footer-links a {
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+
+        .footer-links a:hover {
+            color: var(--primary);
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .hero h1 {
+                font-size: 42px;
+            }
+
+            .hero .subtitle {
+                font-size: 20px;
+            }
+
+            .download-section {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .download-btn {
+                justify-content: center;
+            }
+
+            .nav-links {
+                gap: 20px;
+            }
+
+            .section-title {
+                font-size: 32px;
+            }
+        }
+
+        /* Coming Soon Badge */
+        .coming-soon {
+            position: relative;
+            display: inline-block;
+        }
+
+        .coming-soon::after {
+            content: "Coming Soon";
+            position: absolute;
+            top: -8px;
+            right: -8px;
+            background: var(--text-muted);
+            color: white;
+            font-size: 10px;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <header>
+        <nav class="container">
+            <div class="logo">
+                <span class="logo-emoji">☕</span>
+                <span>Donna AI</span>
+            </div>
+            <div class="nav-links">
+                <a href="#features">Features</a>
+                <a href="#download">Download</a>
+                <a href="#how-it-works">How It Works</a>
+            </div>
+        </nav>
+    </header>
+
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="container">
+            <h1>Meet Donna</h1>
+            <p class="subtitle">Your intelligent executive assistant, inspired by Donna Paulsen from Suits</p>
+            <p class="tagline">Confident. Witty. Sharp. Professional with undeniable personality.</p>
+            
+            <div class="download-section" id="download">
+                <a href="#download-windows" class="download-btn">
+                    <span class="platform-icon">🪟</span>
+                    <span>Download for Windows</span>
+                </a>
+                <a href="#download-macos" class="download-btn">
+                    <span class="platform-icon">🍎</span>
+                    <span>Download for macOS</span>
+                </a>
+                <a href="#download-linux" class="download-btn secondary">
+                    <span class="platform-icon">🐧</span>
+                    <span>Download for Linux</span>
+                </a>
+            </div>
+
+            <p style="color: var(--text-muted); font-size: 14px;">
+                Version 1.0.0 • Free to download
+            </p>
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section class="features" id="features">
+        <div class="container">
+            <h2 class="section-title">Why Donna?</h2>
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">📅</div>
+                    <h3>Smart Calendar Management</h3>
+                    <p>Schedule meetings, move events, and manage your calendar with natural language. Donna handles conflicts and suggests the best times.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">📧</div>
+                    <h3>Inbox Intelligence</h3>
+                    <p>Get organized briefings of your emails and messages. Donna prioritizes what matters and groups routine updates.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">⏰</div>
+                    <h3>Never Miss a Thing</h3>
+                    <p>Set reminders, create tasks, and stay on top of your commitments. Donna keeps you organized and on schedule.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">💬</div>
+                    <h3>Multi-Platform Integration</h3>
+                    <p>Connect Google Calendar, Outlook, Gmail, Teams, and Slack. Donna works across all your tools.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🎭</div>
+                    <h3>Your Style, Your Way</h3>
+                    <p>Adjust Donna's personality from professional to sassy. She's always confident, witty, and sharp—just like you need her.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🔒</div>
+                    <h3>Privacy First</h3>
+                    <p>Your data stays secure. Donna runs locally on your machine and only connects to services you authorize.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- How It Works -->
+    <section class="how-it-works" id="how-it-works">
+        <div class="container">
+            <h2 class="section-title">How It Works</h2>
+            <div class="steps">
+                <div class="step">
+                    <div class="step-number">1</div>
+                    <h3>Download</h3>
+                    <p>Get Donna for your platform. One-click install, no hassle.</p>
+                </div>
+                <div class="step">
+                    <div class="step-number">2</div>
+                    <h3>Connect</h3>
+                    <p>Link your Google, Microsoft, and Slack accounts securely.</p>
+                </div>
+                <div class="step">
+                    <div class="step-number">3</div>
+                    <h3>Start Talking</h3>
+                    <p>Just tell Donna what you need. She understands natural language.</p>
+                </div>
+                <div class="step">
+                    <div class="step-number">4</div>
+                    <h3>Get Things Done</h3>
+                    <p>Watch Donna handle your calendar, emails, and tasks effortlessly.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- CTA Section -->
+    <section class="cta">
+        <div class="container">
+            <h2>Ready to Get Started?</h2>
+            <p>Download Donna today and experience the future of personal assistance.</p>
+            <div class="download-section">
+                <a href="#download-windows" class="download-btn" style="background: white; color: var(--primary);">
+                    <span class="platform-icon">🪟</span>
+                    <span>Download for Windows</span>
+                </a>
+                <a href="#download-macos" class="download-btn" style="background: white; color: var(--primary);">
+                    <span class="platform-icon">🍎</span>
+                    <span>Download for macOS</span>
+                </a>
+                <a href="#download-linux" class="download-btn" style="background: rgba(255,255,255,0.2); color: white; border: 2px solid white;">
+                    <span class="platform-icon">🐧</span>
+                    <span>Download for Linux</span>
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <div class="footer-links">
+                <a href="#features">Features</a>
+                <a href="#download">Download</a>
+                <a href="#how-it-works">How It Works</a>
+                <a href="https://github.com" target="_blank">GitHub</a>
+                <a href="mailto:support@donna.ai">Support</a>
+            </div>
+            <p>&copy; 2026 Donna AI. All rights reserved.</p>
+            <p style="margin-top: 10px; font-size: 14px; opacity: 0.8;">
+                Inspired by Donna Paulsen from "Suits"
+            </p>
+        </div>
+    </footer>
+
+    <script>
+        // Smooth scrolling
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                e.preventDefault();
+                const target = document.querySelector(this.getAttribute('href'));
+                if (target) {
+                    target.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'start'
+                    });
+                }
+            });
+        });
+
+        // Download button handlers (update with actual download URLs)
+        document.querySelectorAll('.download-btn').forEach(btn => {
+            btn.addEventListener('click', function(e) {
+                const href = this.getAttribute('href');
+                if (href.startsWith('#download-')) {
+                    e.preventDefault();
+                    const platform = href.replace('#download-', '');
+                    
+                    // Update these URLs with your actual download links
+                    // For GitHub Releases: https://github.com/yourusername/donna/releases/download/v1.0.0/filename
+                    // For direct hosting: https://yourdomain.com/downloads/filename
+                    const downloadUrls = {
+                        'windows': 'https://github.com/yourusername/donna/releases/download/v1.0.0/donna-setup.exe',
+                        'macos': 'https://github.com/yourusername/donna/releases/download/v1.0.0/donna-1.0.0.dmg',
+                        'linux': 'https://github.com/yourusername/donna/releases/download/v1.0.0/donna_1.0.0_amd64.AppImage'
+                    };
+                    
+                    if (downloadUrls[platform]) {
+                        window.open(downloadUrls[platform], '_blank');
+                    } else {
+                        alert(`Download for ${platform} coming soon!`);
+                    }
+                }
+            });
+        });
+
+        // Add scroll effect to header
+        let lastScroll = 0;
+        const header = document.querySelector('header');
+        window.addEventListener('scroll', () => {
+            const currentScroll = window.pageYOffset;
+            if (currentScroll > 100) {
+                header.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)';
+            } else {
+                header.style.boxShadow = '0 2px 8px rgba(0,0,0,0.05)';
+            }
+            lastScroll = currentScroll;
+        });
+    </script>
+</body>
+</html>
+

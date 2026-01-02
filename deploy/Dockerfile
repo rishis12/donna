@@ -39,13 +39,20 @@ COPY --from=builder /root/.local /home/appuser/.local
 # Copy application code
 COPY backend/ /app/
 
+# Copy landing page to app directory (same level as main.py)
+# This ensures it's accessible in the deployed environment
+# The landing page will be at /app/app/landing.html (same directory as main.py)
+COPY landing.html /app/app/landing.html
+
+# Ensure landing page is readable by appuser
+USER root
+RUN chown appuser:appuser /app/app/landing.html || echo "Landing page not found, continuing..."
+USER appuser
+
 # Set PATH to include user local bin
 ENV PATH=/home/appuser/.local/bin:$PATH
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
-
-# Switch to non-root user
-USER appuser
 
 # Expose port
 EXPOSE 8000
@@ -62,4 +69,9 @@ USER appuser
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+
+
+
+
 

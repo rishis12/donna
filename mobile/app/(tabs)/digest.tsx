@@ -139,9 +139,62 @@ export default function DigestScreen() {
             <Ionicons name="mail" size={18} color={colors.primary} />
             <Text style={styles.communicationsTitle}>Your Inbox Briefing</Text>
           </View>
-          <Text style={styles.communicationsText}>
-            {dailyDigest.communicationsSummary}
-          </Text>
+          {(() => {
+            // Parse HTML and render with proper formatting
+            const text = dailyDigest.communicationsSummary;
+            const lines = text.split('\n');
+            const parts: JSX.Element[] = [];
+            
+            lines.forEach((line, lineIdx) => {
+              if (!line.trim()) return;
+              
+              // Check for platform header
+              if (line.includes('<strong>') && line.includes(':</strong>')) {
+                const platform = line.replace(/<strong>|<\/strong>/g, '').replace(':', '').trim();
+                parts.push(
+                  <Text key={`header-${lineIdx}`} style={[styles.communicationsText, { fontWeight: '700', marginTop: lineIdx > 0 ? 12 : 0, marginBottom: 4, fontSize: 16 }]}>
+                    {platform}:
+                  </Text>
+                );
+              } else {
+                // Regular line - parse <b> tags for bold
+                const cleanLine = line.replace(/<strong>.*?<\/strong>/g, '').trim();
+                if (!cleanLine) return;
+                
+                const boldRegex = /<b>(.*?)<\/b>/g;
+                const lineParts: (string | JSX.Element)[] = [];
+                let lastIndex = 0;
+                let match;
+                let keyCounter = 0;
+                
+                while ((match = boldRegex.exec(cleanLine)) !== null) {
+                  // Add text before bold
+                  if (match.index > lastIndex) {
+                    lineParts.push(cleanLine.substring(lastIndex, match.index));
+                  }
+                  // Add bold text
+                  lineParts.push(
+                    <Text key={`bold-${lineIdx}-${keyCounter++}`} style={{ fontWeight: '700', color: colors.text }}>
+                      {match[1]}
+                    </Text>
+                  );
+                  lastIndex = match.index + match[0].length;
+                }
+                // Add remaining text
+                if (lastIndex < cleanLine.length) {
+                  lineParts.push(cleanLine.substring(lastIndex));
+                }
+                
+                parts.push(
+                  <Text key={`line-${lineIdx}`} style={[styles.communicationsText, { marginTop: 4 }]}>
+                    {lineParts.length > 1 ? lineParts : cleanLine}
+                  </Text>
+                );
+              }
+            });
+            
+            return <View>{parts}</View>;
+          })()}
           <View style={styles.communicationsStats}>
             {(dailyDigest.unreadEmailsGmail || 0) > 0 && (
               <Text style={styles.statText}>📧 {dailyDigest.unreadEmailsGmail} Gmail</Text>

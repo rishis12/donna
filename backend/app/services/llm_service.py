@@ -355,57 +355,71 @@ async def transcribe_audio(audio_data: bytes) -> str:
         return f"Error transcribing audio: {str(e)}"
 
 
-def _post_process_summary(summary: str, max_lines: int = 8) -> str:
+def _post_process_summary(summary: str, max_lines: int = 12) -> str:
     """
     Post-process LLM summary text:
-    - Preserve bullet points and line structure
-    - Insert line breaks between sentences if needed
-    - Preserve **bold** formatting
-    - Trim to max lines
+    - Preserve platform headers (Gmail:, Outlook:, Teams:, Slack:)
+    - Preserve HTML <b> tags for bold formatting
+    - Keep platform organization
+    - Trim to max lines while preserving headers
     """
     if not summary:
         return summary
     
     import re
     
-    # First, check if summary already has line breaks (bullet points or structured format)
+    # Split by lines to preserve structure
     lines = summary.split('\n')
     
-    # If we have multiple lines, preserve the structure
-    if len(lines) > 1:
-        # Clean up each line but preserve structure
-        processed_lines = []
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            # Preserve bullet markers (•, -, *) and formatting
-            processed_lines.append(line)
+    # Process lines while preserving platform headers
+    processed_lines = []
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
         
-        # Limit to max_lines
-        if len(processed_lines) > max_lines:
+        # Check if this is a platform header (Gmail:, Outlook:, Teams:, Slack:)
+        header_match = re.match(r'^(Gmail|Outlook|Teams|Slack):\s*$', line, re.IGNORECASE)
+        if header_match:
+            # This is a platform header - convert to HTML strong tag
+            platform = header_match.group(1)
+            processed_lines.append(f"<strong>{platform}:</strong>")
+            continue
+        
+        # Regular content line - preserve HTML <b> tags
+        # Convert **markdown** to <b>HTML</b> if present
+        line = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', line)
+        
+        # Clean up extra whitespace but keep HTML tags
+        line = re.sub(r'\s+', ' ', line)
+        
+        # Ensure bullet points are preserved
+        if not line.startswith('•') and not line.startswith('-') and not line.startswith('*'):
+            # Add bullet if missing (for non-header lines)
+            line = '• ' + line
+        
+        processed_lines.append(line)
+    
+    # Limit to max_lines, but try to keep complete platform sections
+    if len(processed_lines) > max_lines:
+        # Try to keep at least one complete platform section
+        # Find the last platform header before max_lines
+        last_header_idx = -1
+        for i in range(min(max_lines, len(processed_lines)) - 1, -1, -1):
+            if '<strong>' in processed_lines[i] and ':</strong>' in processed_lines[i]:
+                last_header_idx = i
+                break
+        
+        if last_header_idx >= 0:
+            # Keep everything up to and including the last complete section
+            # But limit to max_lines
             processed_lines = processed_lines[:max_lines]
-        
-        return '\n'.join(processed_lines)
+        else:
+            # No header found, just truncate
+            processed_lines = processed_lines[:max_lines]
     
-    # If single line or no clear structure, split on sentences
-    # Normalize whitespace: replace multiple spaces with single space
-    normalized = re.sub(r'\s+', ' ', summary.strip())
-    
-    # Split into sentences: split on sentence endings (. ! ?) followed by space
-    sentences = re.split(r'(?<=[.!?])\s+', normalized)
-    
-    # Filter out empty sentences and strip whitespace
-    sentences = [s.strip() for s in sentences if s.strip()]
-    
-    # Limit to max_lines before joining
-    if len(sentences) > max_lines:
-        sentences = sentences[:max_lines]
-    
-    # Join with line breaks
-    processed = '\n'.join(sentences)
-    
-    return processed.strip()
+    return '\n'.join(processed_lines).strip()
 
 
 def _parse_timestamp(timestamp_str: str) -> Optional[datetime]:
@@ -575,26 +589,36 @@ async def summarize_communications(emails: list, teams_messages: list, slack_mes
 {vip_context}
 {email_text}{teams_text}{slack_text}
 
-Create a brief summary using ONLY short bullet-style sentences. Format rules:
-- ALWAYS bold sender names using **Name** format (e.g., "Reply to **John Smith** about...")
-- VIP contacts (listed above) must be bolded and appear FIRST, before all other items
-- Start with VIP contacts, then urgent items that need immediate action (use "URGENT:" prefix if critical)
+Create a brief summary organized by platform with headers. Format rules:
+- Organize by platform: Gmail, Outlook, Teams, Slack (only include platforms that have messages)
+- Use HTML <b> tags for bold names (e.g., "Reply to <b>John Smith</b> about...")
+- VIP contacts (listed above) must be bolded and appear FIRST within each platform section
+- Start each platform section with a header: "Gmail:", "Outlook:", "Teams:", or "Slack:"
 - Each bullet should be ONE short sentence (max 15 words)
-- Explicitly state required actions: "Reply to **[name]** about [topic]" or "Action needed: [what]"
+- Explicitly state required actions: "Reply to <b>[name]</b> about [topic]" or "Action needed: [what]"
 - Mention deadlines if present
 - Group low-priority/routine items (newsletters, automated emails, status reports) into a single final line: "Other updates: [item1], [item2], [item3]."
 
 Structure:
-• [VIP contact item with **Name** bolded]
-• [VIP contact item with **Name** bolded]
-• [Urgent item 1 with **Name** bolded]
-• [Urgent item 2 with **Name** bolded]
-• [Important item with **Name** bolded]
-• Other updates: [routine item1], [routine item2], [routine item3].
+Gmail:
+• [VIP contact item with <b>Name</b> bolded]
+• [Urgent item with <b>Name</b> bolded]
+• [Important item with <b>Name</b> bolded]
+• Other updates: [routine items]
+
+Outlook:
+• [VIP contact item with <b>Name</b> bolded]
+• [Important item with <b>Name</b> bolded]
+
+Teams:
+• [Message from <b>Name</b> about [topic]]
+
+Slack:
+• [Message in #channel from <b>Name</b>]
 
 DO NOT write paragraphs or long blocks of text. Keep each bullet concise and action-oriented.
 Group newsletters, automated emails, and status reports into the final "Other updates:" line. Focus main bullets on items requiring user attention.
-Always bold ALL sender names using **Name** format."""
+Always bold ALL sender names using <b>Name</b> HTML tags. Only include platform headers for platforms that have messages."""
 
     try:
         # Try 70B, fallback to 8B on rate limit
@@ -628,8 +652,8 @@ Always bold ALL sender names using **Name** format."""
                 raise
 
         summary = response.choices[0].message.content.strip()
-        # Post-process summary: insert line breaks, preserve bold, trim to ~8 lines
-        summary = _post_process_summary(summary, max_lines=8)
+        # Post-process summary: preserve platform headers, HTML bold tags, trim to ~12 lines
+        summary = _post_process_summary(summary, max_lines=12)
         return summary
     except Exception as e:
         print(f"Error generating summary: {e}")

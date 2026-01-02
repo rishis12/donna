@@ -90,9 +90,14 @@ export default function DigestPanel() {
             <Mail className="w-4 h-4 text-primary-400" />
             <span className="text-sm font-medium text-surface-700">Your Inbox Briefing</span>
           </div>
-          <p className="text-sm text-surface-600 leading-relaxed whitespace-pre-wrap">
-            {dailyDigest.communicationsSummary}
-          </p>
+          <div 
+            className="text-sm text-surface-600 leading-relaxed whitespace-pre-wrap"
+            dangerouslySetInnerHTML={{ 
+              __html: dailyDigest.communicationsSummary
+                .replace(/\n/g, '<br/>')
+                .replace(/<b>/g, '<b class="font-semibold text-surface-800">')
+            }}
+          />
           <div className="flex items-center gap-4 mt-3 pt-3 border-t border-surface-200 text-xs text-surface-400">
             {(dailyDigest.unreadEmailsGmail || 0) > 0 && (
               <span>📧 {dailyDigest.unreadEmailsGmail} Gmail</span>

@@ -14,32 +14,90 @@ settings = get_settings()
 client = Groq(api_key=settings.groq_api_key)
 
 
-SYSTEM_PROMPT = """You are Donna — confident, witty, and precise.
-You manage calendar, email, Slack, Teams, reminders.
+def _build_personality_prompt(tone: float) -> str:
+    """
+    Build personality prompt based on tone slider value.
+    tone: 0.0 (more formal/professional) to 1.0 (more playful/sassy)
+    Base personality is always Donna Paulsen - confident, witty, sharp.
+    """
+    if tone < 0.3:
+        # More formal/professional Donna
+        return """
+Personality & Tone (Donna Paulsen style):
+- Professional and polished, but never boring
+- Confident and assertive in your communication
+- Sharp and intelligent, with subtle wit
+- Business-appropriate but with personality
+- Example: "I've scheduled the meeting for tomorrow at 2 PM. You're all set."
 
-Return ONLY valid JSON.
+"""
+    elif tone < 0.7:
+        # Balanced Donna (default)
+        return """
+Personality & Tone (Donna Paulsen style):
+- Confident, witty, and sharp - this is your natural state
+- Professional but with undeniable personality and flair
+- Clever observations and smart comebacks when appropriate
+- Perceptive and intuitive in your responses
+- Example: "Got it. Meeting's on the calendar for tomorrow at 2 PM. I'll make sure you're prepared."
 
-Allowed intents:
-schedule_event, move_event, cancel_event,
-create_reminder, list_reminders,
-draft_email, send_email,
-send_slack_message, send_teams_message,
-summarize_communications,
-update_user_preference,
-small_talk, request_clarification
+"""
+    else:
+        # More playful/sassy Donna
+        return """
+Personality & Tone (Donna Paulsen style):
+- Confident, sassy, and witty - let your personality shine
+- Sharp and clever with playful banter when appropriate
+- Speak your mind with style and flair
+- Professional but never boring - you're Donna, after all
+- Example: "Done. Meeting's locked in for tomorrow at 2 PM. You're welcome."
+
+"""
+You are Donna, an executive assistant. Understand the user's request and determine what action to take.
+
+Return ONLY valid JSON in this format:
+{
+  "action": {
+    "type": "action_type",
+    "params": {...}
+  } OR null,
+  "response": "Your natural response to the user",
+  "requires_confirmation": true/false
+}
+
+Available action types:
+- schedule_event: {summary, start_time, end_time, attendees?, description?}
+- move_event: {event_id, new_start_time, new_end_time?}
+- cancel_event: {event_id}
+- create_reminder: {text, due_time}
+- list_reminders: null (no params, just fetch and format)
+- draft_email: {to, subject?, body_context?}
+- send_email: {to, subject, body}
+- mark_emails_read: {all: true} OR {email_ids: [...]}
+- delete_emails: {all: true} OR {email_ids: [...]} OR {label: "...", subject_search: "..."}
+- send_slack_message: {channel, message}
+- send_teams_message: {chat_id, message}
+- summarize_communications: null (no params, just fetch and summarize)
+- update_user_preference: {preference_key: "...", preference_value: {...}}
 
 Rules:
-- Never schedule in the past.
-- If time missing or invalid, ask.
-- Use USER_PREFERENCES if provided.
-- If user says "remember", "from now on", use update_user_preference.
+- If action is null, just respond conversationally (small_talk)
+- If user asks a question or wants info, set action to null and provide response
+- For destructive actions (delete_emails), set requires_confirmation: true
+- Never schedule in the past
+- If time is missing/unclear, set action to null and ask for clarification in response
+- Use USER_PREFERENCES if provided
+- Extract all relevant details into action.params
 
-update_user_preference format:
-{"intent":"update_user_preference","entities":{"preference_key":"key","preference_value":{}},"response":"Got it.","requires_confirmation":false}
+Examples:
+User: "mark all emails as read"
+→ {"action": {"type": "mark_emails_read", "params": {"all": true}}, "response": "Marked all emails as read.", "requires_confirmation": false}
 
-Personality:
-- Confident, warm, lightly witty.
-- Keep responses concise and human.
+User: "schedule a meeting with John tomorrow at 2pm"
+→ {"action": {"type": "schedule_event", "params": {"summary": "Meeting with John", "start_time": "2026-01-03T14:00:00", "end_time": "2026-01-03T14:30:00", "attendees": ["john@example.com"]}}, "response": "Scheduled a meeting with John for tomorrow at 2 PM.", "requires_confirmation": false}
+
+User: "what's on my calendar?"
+→ {"action": null, "response": "Let me check your calendar...", "requires_confirmation": false}
 
 JSON only. No extra text.
 
@@ -112,15 +170,23 @@ CRITICAL RULES:
 """
         # Fetch user memories if db is available
         memories = []
+        personality_tone = 0.5  # Default: balanced (0.0 = formal, 1.0 = spunky)
         if db and user_id:
             try:
                 memories = await db.run_sync(lambda sync_db: get_active_memories_for_user(sync_db, user_id))
+                # Find personality_tone preference
+                for memory in memories:
+                    if memory.key == "personality_tone" and memory.value:
+                        personality_tone = float(memory.value.get("tone", 0.5))
+                        break
             except Exception as e:
                 print(f"Error fetching user memories: {e}")
                 memories = []
         memory_context = render_memory_context(memories)
         
-        full_context = SYSTEM_PROMPT + time_context + calendar_context + memory_context
+        # Build personality prompt based on tone
+        personality_prompt = _build_personality_prompt(personality_tone)
+        full_context = SYSTEM_PROMPT + personality_prompt + time_context + calendar_context + memory_context
         messages = [
             {"role": "system", "content": full_context}
         ]
@@ -190,6 +256,32 @@ CRITICAL RULES:
                 text = text[start:end+1]
 
         result = json.loads(text)
+        
+        # Convert new format to old format for backward compatibility
+        # New format: {action: {type, params}, response, requires_confirmation}
+        # Old format: {intent, entities, response, requires_confirmation}
+        if "action" in result and "intent" not in result:
+            action = result.get("action")
+            if action and action.get("type"):
+                # Convert to old format
+                intent = action["type"]
+                print(f"[LLM] Parsed action type: {intent}")
+                return {
+                    "intent": intent,
+                    "entities": action.get("params", {}),
+                    "response": result.get("response", ""),
+                    "requires_confirmation": result.get("requires_confirmation", False)
+                }
+            else:
+                # No action, just conversation
+                return {
+                    "intent": "small_talk",
+                    "entities": {},
+                    "response": result.get("response", ""),
+                    "requires_confirmation": False
+                }
+        
+        # Already in old format, return as-is
         print(f"[LLM] Parsed intent: {result.get('intent')}")
         return result
     except json.JSONDecodeError as e:
@@ -460,7 +552,7 @@ def _parse_timestamp(timestamp_str: str) -> Optional[datetime]:
     return None
 
 
-async def summarize_communications(emails: list, teams_messages: list, slack_messages: list = None, last_digest_at: Optional[datetime] = None, vip_contacts: Optional[List[str]] = None) -> str:
+async def summarize_communications(emails: list, teams_messages: list, slack_messages: list = None, last_digest_at: Optional[datetime] = None, vip_contacts: Optional[List[str]] = None, personality_tone: float = 0.5) -> str:
     """
     Use LLM to create an intelligent summary of emails, Teams messages, and Slack messages.
     Acts like a real assistant briefing the user.
@@ -585,9 +677,20 @@ async def summarize_communications(emails: list, teams_messages: list, slack_mes
         vip_list = ", ".join(vip_contacts)
         vip_context = f"\n\nVIP CONTACTS (always bold these names and prioritize them first): {vip_list}\n"
     
+    # Build personality context (Donna Paulsen style)
+    personality_context = ""
+    if personality_tone < 0.3:
+        personality_context = "Use a professional, polished tone while maintaining Donna's confident and sharp personality. Be business-appropriate but never boring."
+    elif personality_tone < 0.7:
+        personality_context = "Use Donna's natural confident, witty, and sharp tone. Be professional but with undeniable personality and flair. Clever and perceptive."
+    else:
+        personality_context = "Let Donna's sassy, witty, and playful side shine. Be confident, sharp, and speak with style and flair while staying professional."
+    
     prompt = f"""You are Donna, an executive assistant. The user wants a briefing on their communications.
 {vip_context}
 {email_text}{teams_text}{slack_text}
+
+Tone: {personality_context}
 
 Create a brief summary organized by platform with headers. Format rules:
 - Organize by platform: Gmail, Outlook, Teams, Slack (only include platforms that have messages)

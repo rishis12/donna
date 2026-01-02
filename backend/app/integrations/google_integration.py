@@ -19,6 +19,12 @@ SCOPES = [
 ]
 
 def get_auth_flow() -> Flow:
+    """Get Google OAuth flow. Raises error if credentials are not configured."""
+    if not settings.google_client_id or not settings.google_client_secret:
+        raise ValueError(
+            "Google OAuth credentials not configured. "
+            "Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in your .env file."
+        )
     return Flow.from_client_config(
         {
             "web": {
@@ -34,6 +40,7 @@ def get_auth_flow() -> Flow:
     )
 
 def get_auth_url(state: str = None) -> str:
+    """Get Google OAuth authorization URL. Raises error if credentials are not configured."""
     flow = get_auth_flow()
     auth_url, _ = flow.authorization_url(prompt="consent", access_type="offline", state=state)
     return auth_url

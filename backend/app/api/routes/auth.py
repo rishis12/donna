@@ -180,15 +180,39 @@ async def get_me(user: User = Depends(get_current_user), db: AsyncSession = Depe
 @router.get("/google")
 async def google_auth(platform: str = Query(default="desktop")):
     """Start Google OAuth flow for login/signup."""
-    state = encode_state({"action": "login", "platform": platform})
-    return {"auth_url": google_integration.get_auth_url(state=state)}
+    try:
+        state = encode_state({"action": "login", "platform": platform})
+        auth_url = google_integration.get_auth_url(state=state)
+        return {"auth_url": auth_url}
+    except ValueError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to initialize Google OAuth: {str(e)}"
+        )
 
 @router.get("/google/connect")
 async def google_connect(user: User = Depends(get_current_user)):
     """For already logged-in users who want to connect Google."""
-    # Include user ID in state so callback knows to update this user
-    state = encode_state({"action": "connect", "user_id": str(user.id)})
-    return {"auth_url": google_integration.get_auth_url(state=state)}
+    try:
+        # Include user ID in state so callback knows to update this user
+        state = encode_state({"action": "connect", "user_id": str(user.id)})
+        auth_url = google_integration.get_auth_url(state=state)
+        return {"auth_url": auth_url}
+    except ValueError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to initialize Google OAuth: {str(e)}"
+        )
 
 @router.get("/google/callback")
 async def google_callback(
@@ -295,14 +319,38 @@ async def google_callback(
 @router.get("/microsoft")
 async def microsoft_auth(platform: str = Query(default="desktop")):
     """Start Microsoft OAuth flow for login/signup."""
-    state = encode_state({"action": "login", "platform": platform})
-    return {"auth_url": microsoft_integration.get_auth_url(state=state)}
+    try:
+        state = encode_state({"action": "login", "platform": platform})
+        auth_url = microsoft_integration.get_auth_url(state=state)
+        return {"auth_url": auth_url}
+    except ValueError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to initialize Microsoft OAuth: {str(e)}"
+        )
 
 @router.get("/microsoft/connect")
 async def microsoft_connect(user: User = Depends(get_current_user)):
     """For already logged-in users who want to connect Microsoft."""
-    state = encode_state({"action": "connect", "user_id": str(user.id)})
-    return {"auth_url": microsoft_integration.get_auth_url(state=state)}
+    try:
+        state = encode_state({"action": "connect", "user_id": str(user.id)})
+        auth_url = microsoft_integration.get_auth_url(state=state)
+        return {"auth_url": auth_url}
+    except ValueError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to initialize Microsoft OAuth: {str(e)}"
+        )
 
 @router.get("/microsoft/callback")
 async def microsoft_callback(

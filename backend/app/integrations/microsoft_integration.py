@@ -275,12 +275,13 @@ async def list_teams_messages(
         
         try:
             # Get personal chats
+            # Note: unreadCount is not available in $select for /me/chats endpoint
             chats_response = await client.get(
                 f"{GRAPH_URL}/me/chats",
                 headers=headers,
                 params={
                     "$top": 50,  # Get up to 50 chats
-                    "$select": "id,chatType,topic,unreadCount"
+                    "$select": "id,chatType,topic"  # Removed unreadCount - not supported in $select
                 }
             )
             
@@ -291,6 +292,16 @@ async def list_teams_messages(
                     request=chats_response.request,
                     response=chats_response
                 )
+            
+            # Handle 400 Bad Request - might be invalid parameters
+            if chats_response.status_code == 400:
+                # Try without $select to see if that's the issue
+                chats_response = await client.get(
+                    f"{GRAPH_URL}/me/chats",
+                    headers=headers,
+                    params={"$top": 50}
+                )
+                chats_response.raise_for_status()
             
             chats_response.raise_for_status()
             chats = chats_response.json().get("value", [])
@@ -332,6 +343,8 @@ async def list_teams_messages(
                         from_user = msg.get("from", {}).get("user", {})
                         body_content = msg.get("body", {})
                         
+                        # Note: unreadCount is not available on chat object from /me/chats
+                        # We'll mark as unread if we're filtering for unread only
                         all_messages.append({
                             "id": msg.get("id"),
                             "from": from_user.get("displayName", "Unknown"),
@@ -340,7 +353,7 @@ async def list_teams_messages(
                             "chatId": chat_id,
                             "chatType": chat.get("chatType", "unknown"),
                             "topic": chat.get("topic", ""),
-                            "unread": chat.get("unreadCount", 0) > 0
+                            "unread": unread_only  # If filtering for unread, assume all are unread
                         })
                         
                         # Stop if we have enough messages
@@ -379,10 +392,11 @@ async def get_teams_message_count(access_token: str, unread_only: bool = False) 
         
         try:
             # Get personal chats
+            # Note: unreadCount is not available in $select for /me/chats endpoint
             chats_response = await client.get(
                 f"{GRAPH_URL}/me/chats",
                 headers=headers,
-                params={"$top": 50, "$select": "id,unreadCount"}
+                params={"$top": 50, "$select": "id"}  # Removed unreadCount - not supported
             )
             
             # Handle 401 Unauthorized - token expired
@@ -393,17 +407,49 @@ async def get_teams_message_count(access_token: str, unread_only: bool = False) 
                     response=chats_response
                 )
             
+            # Handle 400 Bad Request - might be invalid parameters
+            if chats_response.status_code == 400:
+                # Try without $select to see if that's the issue
+                chats_response = await client.get(
+                    f"{GRAPH_URL}/me/chats",
+                    headers=headers,
+                    params={"$top": 50}
+                )
+                chats_response.raise_for_status()
+            
             chats_response.raise_for_status()
             chats = chats_response.json().get("value", [])
             
             if unread_only:
-                # Count unread messages across all chats
-                total_unread = sum(chat.get("unreadCount", 0) for chat in chats)
+                # Since unreadCount is not available, we need to check messages
+                # This is more expensive but necessary for accurate count
+                total_unread = 0
+                for chat in chats[:10]:  # Limit to first 10 chats for performance
+                    try:
+                        chat_id = chat.get("id")
+                        if not chat_id:
+                            continue
+                        # Get unread messages count for this chat
+                        messages_response = await client.get(
+                            f"{GRAPH_URL}/me/chats/{chat_id}/messages",
+                            headers=headers,
+                            params={
+                                "$top": 1,
+                                "$filter": "isRead eq false",
+                                "$count": "true"
+                            }
+                        )
+                        if messages_response.status_code == 200:
+                            # Try to get count from header or response
+                            count_header = messages_response.headers.get("@odata.count")
+                            if count_header:
+                                total_unread += int(count_header)
+                    except Exception:
+                        continue
                 return total_unread
             else:
                 # For total count, we'd need to iterate through all messages
                 # This is expensive, so we return the number of chats as an approximation
-                # or count messages if needed (but that's slow)
                 return len(chats)
                 
         except Exception as e:

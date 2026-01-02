@@ -212,10 +212,11 @@ async def list_emails(
 async def get_email_count(access_token: str, unread_only: bool = False) -> int:
     """
     Get count of emails (unread or total) using Microsoft Graph API.
+    Uses $count query parameter to get accurate count.
     """
     async with httpx.AsyncClient() as client:
         params = {
-            "$top": 1,
+            "$top": 0,  # Don't fetch any messages, just get count
             "$count": "true",
             "$select": "id"
         }
@@ -223,28 +224,39 @@ async def get_email_count(access_token: str, unread_only: bool = False) -> int:
         if unread_only:
             params["$filter"] = "isRead eq false"
         
-        response = await client.get(
-            f"{GRAPH_URL}/me/messages",
-            headers={
-                "Authorization": f"Bearer {decrypt_token(access_token)}",
-                "ConsistencyLevel": "eventual"  # Required for $count
-            },
-            params=params
-        )
-        response.raise_for_status()
-        
-        # Try to get count from response header or body
-        count_header = response.headers.get("@odata.count")
-        if count_header:
-            return int(count_header)
-        
-        # Fallback: if we got results, check the @odata.count in response body
-        response_data = response.json()
-        if "@odata.count" in response_data:
-            return int(response_data["@odata.count"])
-        
-        # If no count available, return 0 (better than error)
-        return 0
+        try:
+            response = await client.get(
+                f"{GRAPH_URL}/me/messages",
+                headers={
+                    "Authorization": f"Bearer {decrypt_token(access_token)}",
+                    "ConsistencyLevel": "eventual",  # Required for $count
+                    "Prefer": "odata.maxpagesize=1"  # Minimize data transfer
+                },
+                params=params
+            )
+            response.raise_for_status()
+            
+            # Try to get count from response header first
+            count_header = response.headers.get("@odata.count")
+            if count_header:
+                try:
+                    return int(count_header)
+                except (ValueError, TypeError):
+                    pass
+            
+            # Fallback: check the @odata.count in response body
+            response_data = response.json()
+            if "@odata.count" in response_data:
+                try:
+                    return int(response_data["@odata.count"])
+                except (ValueError, TypeError):
+                    pass
+            
+            # If no count available, return 0
+            return 0
+        except Exception as e:
+            print(f"Error getting Outlook email count: {e}")
+            return 0
 
 # Microsoft Teams message reading functions
 async def list_teams_messages(

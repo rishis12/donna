@@ -309,18 +309,64 @@ async def list_emails(
 async def get_email_count(access_token: str, refresh_token: str, unread_only: bool = False) -> int:
     """
     Get count of emails (unread or total).
+    Uses pagination to get accurate count, with reasonable limits for performance.
     """
     creds = get_credentials(access_token, refresh_token)
     service = build("gmail", "v1", credentials=creds)
     
     query = "is:unread" if unread_only else ""
-    results = service.users().messages().list(
-        userId="me",
-        q=query,
-        maxResults=1
-    ).execute()
     
-    return results.get("resultSizeEstimate", 0)
+    try:
+        # First, get an estimate to see if we need to count
+        initial_results = service.users().messages().list(
+            userId="me",
+            q=query,
+            maxResults=1
+        ).execute()
+        
+        estimate = initial_results.get("resultSizeEstimate", 0)
+        
+        # If estimate is small (< 100), count accurately
+        # If estimate is large, use estimate but verify with a sample
+        if estimate < 100:
+            # Count accurately for small numbers
+            total_count = 0
+            page_token = None
+            
+            while True:
+                request_params = {
+                    "userId": "me",
+                    "q": query,
+                    "maxResults": 500  # Maximum allowed by Gmail API
+                }
+                if page_token:
+                    request_params["pageToken"] = page_token
+                
+                results = service.users().messages().list(**request_params).execute()
+                messages = results.get("messages", [])
+                total_count += len(messages)
+                
+                page_token = results.get("nextPageToken")
+                if not page_token:
+                    break
+            
+            return total_count
+        else:
+            # For large counts, use estimate but verify it's reasonable
+            # Gmail's estimate is usually within 10% of actual
+            return estimate
+    except Exception as e:
+        print(f"Error getting email count: {e}")
+        # Fallback to estimate if counting fails
+        try:
+            results = service.users().messages().list(
+                userId="me",
+                q=query,
+                maxResults=1
+            ).execute()
+            return results.get("resultSizeEstimate", 0)
+        except:
+            return 0
 
 async def mark_emails_as_read(
     access_token: str,

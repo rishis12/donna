@@ -332,7 +332,9 @@ async def slack_webhook(request: Request, db: AsyncSession = Depends(get_db)):
                         datetime.now(timezone.utc).isoformat(),
                         history,
                         "UTC",  # Default timezone
-                        calendar_context
+                        calendar_context,
+                        db=db,
+                        user_id=str(user.id)
                     )
                     
                     # Send Donna's response back to Slack

@@ -7,8 +7,8 @@ import base64
 import re
 from typing import List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.crud.memory import get_active_memories_for_user
-from app.llm.memory_context import render_memory_context
+from ..crud.memory import get_active_memories_for_user
+from ..llm.memory_context import render_memory_context
 
 settings = get_settings()
 client = Groq(api_key=settings.groq_api_key)

@@ -5,48 +5,56 @@ from datetime import datetime
 import pytz
 import base64
 import re
+from typing import List, Optional
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.crud.memory import get_active_memories_for_user
+from app.llm.memory_context import render_memory_context
 
 settings = get_settings()
 client = Groq(api_key=settings.groq_api_key)
 
-SYSTEM_PROMPT = """You are Donna, a witty yet highly competent executive assistant (like Donna from Suits). You manage scheduling, reminders, emails, Slack messages, and Teams messages with precision. You MUST return ONLY valid JSON — no markdown, no extra text.
-### PRIMARY OUTPUT FORMAT (single action)
-{"intent":"<schedule_event|move_event|cancel_event|create_reminder|list_reminders|draft_email|send_email|mark_emails_read|delete_emails|get_schedule|summarize_communications|send_slack_message|send_teams_message|small_talk|request_clarification>","entities":{"time":"<ISO8601 datetime or null>","event_title":"<string or null>","event_id":"<string or null>","event_ids":["<id1>","<id2>"] or null,"attendees":["email@example.com"] or null,"to":"<email or null>","recipient":"<email or null>","email":"<email or null>","subject":"<email subject or null>","body":"<email body or null>","email_body":"<email message content or null>","message":"<message content for email, Slack, or Teams or null>","slack_message":"<Slack message content or null>","teams_message":"<Teams message content or null>","channel":"<Slack channel name or ID (e.g., #general or C1234567890) or null>","channel_id":"<Slack channel ID or null>","chat_id":"<Teams chat ID or null>","reminder_text":"<text or null>","duration_minutes":<number or null>,"mark_all":<boolean or null>,"email_ids":["<email_id1>","<email_id2>"] or null,"delete_count":<number or null>,"label":"<gmail label like Promotions or category_promotions or null>","subject_search":"<subject text to search for or null>","permanent":<boolean or null>},"response":"<natural response to the user>","requires_confirmation":true|false}
-### MULTI-ACTION FORMAT
-Use ONLY when user clearly requests multiple separate actions.{"actions":[{"intent":"...","entities":{...},"requires_confirmation":true},{"intent":"...","entities":{...},"requires_confirmation":true}],"response":"Summary of all actions for the user.","requires_confirmation":true}
-### HARD RULES (critical)
-1. DO NOT schedule or create reminders in the past. Compare the parsed time to CURRENT_TIME provided. If time <= CURRENT_TIME → reject, ask for a new time.
-2. If the time is missing/unclear/past: return {"intent":"request_clarification","entities":{},"response":"[Explain what's missing or invalid and ask for correct time].","requires_confirmation":false}
-3. For email drafts/sends: "to", "recipient", or "email" must be a valid email address (contains @). If only a name is provided → use "request_clarification" intent and ask for email address.
-4. For marking emails as read: If user says "mark all emails read" or "mark all emails as read" → use "mark_emails_read" intent with "mark_all": true. If user specifies specific emails → use "mark_emails_read" intent with "email_ids" array.
-5. For deleting emails: If user says "delete emails" or "delete X emails" or "delete emails from [label]" → use "delete_emails" intent. Include "delete_count" for number of emails, "label" for inbox/label (e.g., "Promotions" or "category_promotions"), "subject_search" for subject text to search, "email_ids" for specific email IDs, or set all to null to delete matching criteria. Set "permanent": true for permanent deletion (defaults to false/trash).
-6. For Slack messages: If user wants to send a message to Slack (e.g., "send a message to #channel", "post to Slack", "message #channel-name") → use "send_slack_message" intent. Extract "channel" (channel name like "#general" or channel ID), "channel_id" (if provided as ID), and "message" or "slack_message" (the message content). Channel can be specified as "#channel-name" or just "channel-name" (without #). If channel is not specified, ask for clarification. requires_confirmation = TRUE for sending Slack messages.
-7. For Teams messages: If user wants to send a message to Teams (e.g., "send a Teams message", "message in Teams", "reply to Teams chat") → use "send_teams_message" intent. Extract "chat_id" (the Teams chat ID - required) and "message" or "teams_message" (the message content). If chat_id is not specified, ask for clarification. requires_confirmation = TRUE for sending Teams messages.
-8. Confirmation behavior: requires_confirmation = TRUE for actions that modify calendar, send email, send Slack messages, send Teams messages, or delete emails. requires_confirmation = FALSE when clarifying, answering conversationally, or for read-only operations like listing reminders or marking emails as read.
-9. ALWAYS output strictly valid JSON. No markdown, no commentary outside JSON.
-10. TIME PARSING RULES (CRITICAL):
-   - Use LOCAL TIMEZONE and CURRENT_TIME from context for all time reasoning
-   - For relative times: "in X minutes/hours" = CURRENT_TIME + X minutes/hours. Calculate the exact future time.
-   - For "in 5 minutes" → add 5 minutes to CURRENT_TIME, format as ISO8601
-   - For "in 30 minutes" → add 30 minutes to CURRENT_TIME
-   - For "tomorrow at 3pm" → next day at 3:00 PM in user's timezone
-   - For "next Friday at 2pm" → next occurrence of Friday at 2:00 PM
-   - NEVER default to 8am or any arbitrary time. If time is unclear, ask for clarification.
-   - If user says "schedule a meeting" without time → use request_clarification, DO NOT default to 8am
-   - Always calculate times relative to CURRENT_TIME provided in the context
-   - Examples: "in 10 minutes" when CURRENT_TIME is 2:30 PM → time should be "2025-01-22T14:40:00" (2:40 PM)
-11. If user gives multiple event operations in one request → use MULTI-ACTION format.
-12. Make sure to always check the current time before scheduling or moving events and reminders.
-### VALID EXAMPLES
-{"intent":"create_reminder","entities":{"reminder_text":"call mom","time":"2025-01-22T18:00:00"},"response":"I'll remind you at 6pm.","requires_confirmation":true}
-{"intent":"draft_email","entities":{"to":"sarah@example.com","subject":"Update","body":"Just checking in."},"response":"Draft ready — should I send it?","requires_confirmation":true}
-{"intent":"send_slack_message","entities":{"channel":"#all-freakshiprojects","message":"Welcome everyone to freakshiprojects!"},"response":"I'll post that message to #all-freakshiprojects.","requires_confirmation":true}
-{"intent":"send_teams_message","entities":{"chat_id":"19:meeting_abc123def456","message":"Thanks for the update!"},"response":"I'll send that message to the Teams chat.","requires_confirmation":true}
-{"intent":"request_clarification","entities":{},"response":"What's the email address for Tom?","requires_confirmation":false}
-Return ONLY JSON — no backticks, no explanation."""
+
+SYSTEM_PROMPT = """You are Donna — confident, witty, and precise.
+You manage calendar, email, Slack, Teams, reminders.
+
+Return ONLY valid JSON.
+
+Allowed intents:
+schedule_event, move_event, cancel_event,
+create_reminder, list_reminders,
+draft_email, send_email,
+send_slack_message, send_teams_message,
+summarize_communications,
+update_user_preference,
+small_talk, request_clarification
+
+Rules:
+- Never schedule in the past.
+- If time missing or invalid, ask.
+- Use USER_PREFERENCES if provided.
+- If user says "remember", "from now on", use update_user_preference.
+
+update_user_preference format:
+{"intent":"update_user_preference","entities":{"preference_key":"key","preference_value":{}},"response":"Got it.","requires_confirmation":false}
+
+Personality:
+- Confident, warm, lightly witty.
+- Keep responses concise and human.
+
+JSON only. No extra text.
+
+"""
 
 
-async def parse_utterance(utterance: str, current_time: str, conversation_history: list = None, timezone: str = "UTC", calendar_context: str = "") -> dict:
+async def parse_utterance(
+    utterance: str, 
+    current_time: str, 
+    conversation_history: list = None, 
+    timezone: str = "UTC", 
+    calendar_context: str = "",
+    db: Optional[AsyncSession] = None,
+    user_id: Optional[str] = None
+) -> dict:
     # Quick responses for simple greetings (avoid API call)
     simple_greetings = ['hi', 'hello', 'hey', 'yo', 'sup', 'hiya', 'heya']
     if utterance.lower().strip() in simple_greetings:
@@ -102,7 +110,10 @@ CRITICAL RULES:
 4. All times must be FUTURE relative to {readable_local_time}
 5. When user says "schedule a meeting" without time → ask "What time?" using request_clarification
 """
-        full_context = SYSTEM_PROMPT + time_context + calendar_context
+        memories = await db.run_sync(lambda sync_db: get_active_memories_for_user(sync_db, user_id))
+        memory_context = render_memory_context(memories)
+        
+        full_context = SYSTEM_PROMPT + time_context + calendar_context + memory_context
         messages = [
             {"role": "system", "content": full_context}
         ]
@@ -337,13 +348,143 @@ async def transcribe_audio(audio_data: bytes) -> str:
         return f"Error transcribing audio: {str(e)}"
 
 
-async def summarize_communications(emails: list, teams_messages: list, slack_messages: list = None) -> str:
+def _post_process_summary(summary: str, max_lines: int = 8) -> str:
+    """
+    Post-process LLM summary text:
+    - Insert line breaks between sentences
+    - Preserve **bold** formatting
+    - Trim to max lines
+    """
+    if not summary:
+        return summary
+    
+    import re
+    
+    # Normalize whitespace: replace multiple spaces/newlines with single space
+    # This ensures consistent processing while preserving bold markers
+    normalized = re.sub(r'\s+', ' ', summary.strip())
+    
+    # Split into sentences: split on sentence endings (. ! ?) followed by space
+    # Pattern uses positive lookbehind to keep the punctuation with the sentence
+    sentences = re.split(r'(?<=[.!?])\s+', normalized)
+    
+    # Filter out empty sentences and strip whitespace
+    sentences = [s.strip() for s in sentences if s.strip()]
+    
+    # Limit to max_lines before joining
+    if len(sentences) > max_lines:
+        sentences = sentences[:max_lines]
+    
+    # Join with line breaks
+    processed = '\n'.join(sentences)
+    
+    return processed.strip()
+
+
+def _parse_timestamp(timestamp_str: str) -> Optional[datetime]:
+    """
+    Parse a timestamp string from various formats (RFC 2822, ISO 8601, etc.) into a datetime object.
+    Returns None if parsing fails.
+    """
+    if not timestamp_str:
+        return None
+    
+    # If it's already a datetime object, return it
+    if isinstance(timestamp_str, datetime):
+        return timestamp_str
+    
+    # Try ISO 8601 format first (most common for APIs)
+    try:
+        # Handle both with and without timezone
+        if timestamp_str.endswith('Z'):
+            return datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+        return datetime.fromisoformat(timestamp_str)
+    except (ValueError, AttributeError):
+        pass
+    
+    # Try RFC 2822 format (email headers)
+    try:
+        from email.utils import parsedate_to_datetime
+        return parsedate_to_datetime(timestamp_str)
+    except (ValueError, TypeError, AttributeError):
+        pass
+    
+    # Try Unix timestamp (numeric string)
+    try:
+        if timestamp_str.replace('.', '').isdigit():
+            return datetime.fromtimestamp(float(timestamp_str), tz=pytz.UTC)
+    except (ValueError, OSError, AttributeError):
+        pass
+    
+    return None
+
+
+async def summarize_communications(emails: list, teams_messages: list, slack_messages: list = None, last_digest_at: Optional[datetime] = None, vip_contacts: Optional[List[str]] = None) -> str:
     """
     Use LLM to create an intelligent summary of emails, Teams messages, and Slack messages.
     Acts like a real assistant briefing the user.
+    
+    Args:
+        emails: List of email dictionaries with 'date' field
+        teams_messages: List of Teams message dictionaries with 'date' field
+        slack_messages: List of Slack message dictionaries with 'timestamp' field
+        last_digest_at: Optional datetime to filter out items older than this time.
+                       If None, all items are included.
+        vip_contacts: Optional list of VIP contact names/emails to prioritize and bold.
     """
     if slack_messages is None:
         slack_messages = []
+    
+    # Filter items by timestamp if last_digest_at is provided
+    if last_digest_at is not None:
+        # Normalize last_digest_at to timezone-aware datetime
+        if last_digest_at.tzinfo is None:
+            last_digest_at = pytz.UTC.localize(last_digest_at)
+        
+        # Filter emails
+        filtered_emails = []
+        for email in emails:
+            email_date = email.get("date")
+            if email_date:
+                parsed_date = _parse_timestamp(email_date)
+                if parsed_date:
+                    # Make timezone-aware if needed
+                    if parsed_date.tzinfo is None:
+                        parsed_date = pytz.UTC.localize(parsed_date)
+                    # Only include if newer than last_digest_at
+                    if parsed_date > last_digest_at:
+                        filtered_emails.append(email)
+        emails = filtered_emails
+        
+        # Filter Teams messages
+        filtered_teams = []
+        for msg in teams_messages:
+            msg_date = msg.get("date")
+            if msg_date:
+                parsed_date = _parse_timestamp(msg_date)
+                if parsed_date:
+                    # Make timezone-aware if needed
+                    if parsed_date.tzinfo is None:
+                        parsed_date = pytz.UTC.localize(parsed_date)
+                    # Only include if newer than last_digest_at
+                    if parsed_date > last_digest_at:
+                        filtered_teams.append(msg)
+        teams_messages = filtered_teams
+        
+        # Filter Slack messages
+        filtered_slack = []
+        for msg in slack_messages:
+            msg_timestamp = msg.get("timestamp")
+            if msg_timestamp:
+                parsed_date = _parse_timestamp(msg_timestamp)
+                if parsed_date:
+                    # Make timezone-aware if needed
+                    if parsed_date.tzinfo is None:
+                        parsed_date = pytz.UTC.localize(parsed_date)
+                    # Only include if newer than last_digest_at
+                    if parsed_date > last_digest_at:
+                        filtered_slack.append(msg)
+        slack_messages = filtered_slack
     
     if not emails and not teams_messages and not slack_messages:
         return "No new emails or messages to review. You're all caught up!"
@@ -397,20 +538,36 @@ async def summarize_communications(emails: list, teams_messages: list, slack_mes
             slack_text += f"   Message: {text}\n"
             slack_text += f"   Time: {timestamp}\n\n"
 
+    # Build VIP contacts context if provided
+    vip_context = ""
+    if vip_contacts:
+        vip_list = ", ".join(vip_contacts)
+        vip_context = f"\n\nVIP CONTACTS (always bold these names and prioritize them first): {vip_list}\n"
+    
     prompt = f"""You are Donna, an executive assistant. The user wants a briefing on their communications.
-
+{vip_context}
 {email_text}{teams_text}{slack_text}
 
-Create a concise, actionable summary (2-3 paragraphs max) that:
-1. Highlights the most important/urgent items
-2. Groups related items together
-3. Mentions who needs responses
-4. Uses a friendly, professional tone like a real assistant would
+Create a brief summary using ONLY short bullet-style sentences. Format rules:
+- ALWAYS bold sender names using **Name** format (e.g., "Reply to **John Smith** about...")
+- VIP contacts (listed above) must be bolded and appear FIRST, before all other items
+- Start with VIP contacts, then urgent items that need immediate action (use "URGENT:" prefix if critical)
+- Each bullet should be ONE short sentence (max 15 words)
+- Explicitly state required actions: "Reply to **[name]** about [topic]" or "Action needed: [what]"
+- Mention deadlines if present
+- Group low-priority/routine items (newsletters, automated emails, status reports) into a single final line: "Other updates: [item1], [item2], [item3]."
 
-Focus on what matters - skip routine/automated emails unless they're important.
-Be specific about action items and deadlines if mentioned.
+Structure:
+• [VIP contact item with **Name** bolded]
+• [VIP contact item with **Name** bolded]
+• [Urgent item 1 with **Name** bolded]
+• [Urgent item 2 with **Name** bolded]
+• [Important item with **Name** bolded]
+• Other updates: [routine item1], [routine item2], [routine item3].
 
-Return ONLY the summary text, no markdown, no bullet points unless necessary."""
+DO NOT write paragraphs or long blocks of text. Keep each bullet concise and action-oriented.
+Group newsletters, automated emails, and status reports into the final "Other updates:" line. Focus main bullets on items requiring user attention.
+Always bold ALL sender names using **Name** format."""
 
     try:
         # Try 70B, fallback to 8B on rate limit
@@ -419,7 +576,7 @@ Return ONLY the summary text, no markdown, no bullet points unless necessary."""
             response = client.chat.completions.create(
                 model=model,
                 messages=[
-                    {"role": "system", "content": "You are Donna, a professional executive assistant. Provide clear, actionable briefings."},
+                    {"role": "system", "content": "You are Donna, a professional executive assistant. Provide briefings using short bullet-style sentences. Urgent items first, explicit actions required. No long paragraphs."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.6,
@@ -434,7 +591,7 @@ Return ONLY the summary text, no markdown, no bullet points unless necessary."""
                 response = client.chat.completions.create(
                     model=model,
                     messages=[
-                        {"role": "system", "content": "You are Donna, a professional executive assistant. Provide clear, actionable briefings."},
+                        {"role": "system", "content": "You are Donna, a professional executive assistant. Provide briefings using short bullet-style sentences. Urgent items first, explicit actions required. No long paragraphs."},
                         {"role": "user", "content": prompt}
                     ],
                     temperature=0.6,
@@ -444,6 +601,8 @@ Return ONLY the summary text, no markdown, no bullet points unless necessary."""
                 raise
 
         summary = response.choices[0].message.content.strip()
+        # Post-process summary: insert line breaks, preserve bold, trim to ~8 lines
+        summary = _post_process_summary(summary, max_lines=8)
         return summary
     except Exception as e:
         print(f"Error generating summary: {e}")

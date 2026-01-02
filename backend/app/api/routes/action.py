@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from datetime import datetime, timedelta, timezone
 from dateutil import parser as date_parser
 import uuid
@@ -13,13 +13,245 @@ from ...services import reminder_service
 from ...integrations import google_integration, microsoft_integration
 from ...integrations.slack_integration import slack_integration
 from ...models.messaging_account import MessagingAccount
+from ...calendar.conflicts import find_conflict
+from ...crud.memory import get_active_memories_for_user
 from sqlalchemy import select
 from typing import List
+import pytz
 
 router = APIRouter(prefix="/action", tags=["action"])
 
 # In-memory storage for pending actions (in production, use Redis or database)
 pending_actions: Dict[str, Dict[str, Any]] = {}
+
+
+class ConflictException(Exception):
+    """Exception raised when a calendar conflict is detected."""
+    def __init__(self, event_title: str, conflict_event: dict, requested_start: datetime, requested_duration: int):
+        self.event_title = event_title
+        self.conflict_event = conflict_event
+        self.requested_start = requested_start
+        self.requested_duration = requested_duration
+        super().__init__(f"Conflict with event: {event_title}")
+
+
+async def _fetch_events_for_day(user: User, target_date: datetime, exclude_event_id: Optional[str] = None) -> List[dict]:
+    """
+    Fetch calendar events for a specific day and format them for conflict checking.
+    
+    Args:
+        user: User object with access tokens
+        target_date: The date to fetch events for
+        exclude_event_id: Optional event ID to exclude from the results (e.g., when moving an event)
+    
+    Returns:
+        List of formatted event dictionaries with 'start' and 'end' as datetime objects
+    """
+    if not user.google_access_token:
+        return []
+    
+    try:
+        # Fetch events for the target day (start of day to end of day)
+        start_of_day = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_of_day = start_of_day + timedelta(days=1)
+        
+        # Use Google Calendar API to fetch events for the day
+        creds = google_integration.get_credentials(user.google_access_token, user.google_refresh_token)
+        from googleapiclient.discovery import build
+        service = build("calendar", "v3", credentials=creds)
+        
+        events_result = service.events().list(
+            calendarId="primary",
+            timeMin=start_of_day.isoformat() + "Z",
+            timeMax=end_of_day.isoformat() + "Z",
+            maxResults=100,  # Get up to 100 events for the day
+            singleEvents=True,
+            orderBy="startTime"
+        ).execute()
+        
+        raw_events = events_result.get("items", [])
+        
+        # Format events for conflict checking
+        formatted_events = []
+        for e in raw_events:
+            # Skip the event we're moving (if provided)
+            if exclude_event_id and e.get('id') == exclude_event_id:
+                continue
+            
+            start_data = e.get('start', {})
+            end_data = e.get('end', {})
+            
+            # Get start and end times
+            start_str = start_data.get('dateTime') or start_data.get('date', '')
+            end_str = end_data.get('dateTime') or end_data.get('date', '')
+            
+            if not start_str or not end_str:
+                continue
+            
+            try:
+                # Parse to datetime objects
+                if 'T' in start_str:
+                    event_start = date_parser.parse(start_str)
+                else:
+                    # All-day event - convert to datetime at start of day
+                    event_start = datetime.strptime(start_str, '%Y-%m-%d')
+                
+                if 'T' in end_str:
+                    event_end = date_parser.parse(end_str)
+                else:
+                    # All-day event - convert to datetime at end of day
+                    event_end = datetime.strptime(end_str, '%Y-%m-%d')
+                
+                formatted_events.append({
+                    'id': e.get('id'),
+                    'start': event_start,
+                    'end': event_end,
+                    'summary': e.get('summary', 'Untitled')
+                })
+            except (ValueError, TypeError):
+                # Skip events we can't parse
+                continue
+        
+        return formatted_events
+    except Exception as e:
+        print(f"Error fetching events for conflict check: {e}")
+        return []
+
+
+def _get_user_preferences(db: AsyncSession, user_id: str) -> dict:
+    """
+    Fetch user preferences for work_hours and default_meeting_duration.
+    
+    Returns:
+        dict with 'work_hours' and 'default_meeting_duration' keys, or None values if not set
+    """
+    preferences = {
+        'work_hours': None,
+        'default_meeting_duration': None
+    }
+    
+    try:
+        memories = db.run_sync(lambda sync_db: get_active_memories_for_user(sync_db, user_id))
+        for memory in memories:
+            if memory.key == "work_hours":
+                preferences['work_hours'] = memory.value
+            elif memory.key == "default_meeting_duration":
+                preferences['default_meeting_duration'] = memory.value
+    except Exception as e:
+        print(f"Error fetching user preferences: {e}")
+    
+    return preferences
+
+
+def _is_within_work_hours(time: datetime, work_hours: dict) -> bool:
+    """
+    Check if a datetime is within the user's work hours.
+    
+    Args:
+        time: datetime to check
+        work_hours: dict with 'start', 'end', and 'timezone' keys (e.g., {"start": "09:00", "end": "17:00", "timezone": "America/New_York"})
+    
+    Returns:
+        True if within work hours, False otherwise
+    """
+    if not work_hours:
+        return True  # No work hours restriction
+    
+    try:
+        start_str = work_hours.get('start', '09:00')
+        end_str = work_hours.get('end', '17:00')
+        tz_str = work_hours.get('timezone', 'UTC')
+        
+        # Parse start and end times (format: "HH:MM")
+        start_hour, start_minute = map(int, start_str.split(':'))
+        end_hour, end_minute = map(int, end_str.split(':'))
+        
+        # Get timezone
+        user_tz = pytz.timezone(tz_str) if tz_str else pytz.UTC
+        
+        # Convert time to user's timezone
+        if time.tzinfo is None:
+            time = pytz.UTC.localize(time)
+        local_time = time.astimezone(user_tz)
+        
+        # Get time of day in minutes
+        time_minutes = local_time.hour * 60 + local_time.minute
+        start_minutes = start_hour * 60 + start_minute
+        end_minutes = end_hour * 60 + end_minute
+        
+        # Handle cases where work hours span midnight
+        if start_minutes <= end_minutes:
+            return start_minutes <= time_minutes <= end_minutes
+        else:
+            # Work hours span midnight (e.g., 22:00 - 02:00)
+            return time_minutes >= start_minutes or time_minutes <= end_minutes
+    except Exception as e:
+        print(f"Error checking work hours: {e}")
+        return True  # Default to allowing if we can't parse
+
+
+def _find_next_available_slot(events: List[dict], search_from: datetime, duration_minutes: int, search_until_hours: int = 8, work_hours: Optional[dict] = None) -> Optional[datetime]:
+    """
+    Find the next available time slot of the specified duration.
+    
+    Args:
+        events: List of events with 'start' and 'end' datetime objects
+        search_from: The time to start searching from (typically after a conflicting event)
+        duration_minutes: Duration of the slot needed in minutes
+        search_until_hours: How many hours ahead to search (default 8 hours)
+        work_hours: Optional dict with 'start', 'end', 'timezone' to restrict suggestions to work hours
+    
+    Returns:
+        datetime of the next available slot, or None if none found
+    """
+    if not events:
+        return search_from
+    
+    # Sort events by start time
+    sorted_events = sorted(events, key=lambda e: e.get('start', datetime.min))
+    
+    # End time for the search window
+    search_end = search_from + timedelta(hours=search_until_hours)
+    
+    # Start checking from the search_from time
+    current_check = search_from
+    
+    for event in sorted_events:
+        event_start = event.get('start')
+        event_end = event.get('end')
+        
+        if not event_start or not event_end:
+            continue
+        
+        # Skip events that end before our search start
+        if event_end <= current_check:
+            continue
+        
+        # If current check time is before this event, check if we can fit before it
+        if current_check < event_start:
+            slot_end = current_check + timedelta(minutes=duration_minutes)
+            if slot_end <= event_start and slot_end <= search_end:
+                # Check if the slot is within work hours (if defined)
+                if work_hours and not _is_within_work_hours(current_check, work_hours):
+                    # Skip this slot, move to after the event
+                    current_check = event_end
+                    continue
+                return current_check
+        
+        # Move current_check to after this event
+        if current_check < event_end:
+            current_check = event_end
+    
+    # Check if there's time after the last event
+    if current_check < search_end:
+        slot_end = current_check + timedelta(minutes=duration_minutes)
+        if slot_end <= search_end:
+            # Check if the slot is within work hours (if defined)
+            if work_hours and not _is_within_work_hours(current_check, work_hours):
+                return None
+            return current_check
+    
+    return None
 
 def store_pending_action(action_id: str, user_id: str, intent: str, entities: dict, actions: list = None):
     """Store a pending action that requires user confirmation."""
@@ -86,6 +318,9 @@ async def confirm_action(
     
     try:
         result = await execute_single_action(db, user, intent, entities)
+        # Check if result is a request_clarification (conflict detected)
+        if isinstance(result, dict) and result.get("intent") == "request_clarification":
+            return {"status": "clarification_needed", "intent": "request_clarification", "response": result.get("response"), "requires_confirmation": False}
         return {"status": "executed", "result": result}
     except Exception as e:
         return {"status": "error", "message": str(e)}
@@ -96,9 +331,99 @@ async def execute_single_action(db: AsyncSession, user: User, intent: str, entit
     if intent == "create_reminder":
         return await execute_create_reminder(db, user, entities)
     elif intent == "schedule_event":
-        return await execute_create_event(user, entities)
+        try:
+            return await execute_create_event(user, entities, db)
+        except ConflictException as e:
+            # Get user preferences
+            preferences = _get_user_preferences(db, str(user.id))
+            default_duration = preferences.get('default_meeting_duration', {}).get('minutes', 30)
+            work_hours = preferences.get('work_hours')
+            
+            # Find next available slot using default duration
+            existing_events = await _fetch_events_for_day(user, e.requested_start)
+            # Search from after the conflicting event ends, or from requested start if event end is not available
+            search_from = e.conflict_event.get('end')
+            if not search_from:
+                search_from = e.requested_start
+            next_slot = _find_next_available_slot(existing_events, search_from, default_duration, work_hours=work_hours)
+            
+            # Build response with suggestions
+            response_parts = [f"You already have '{e.event_title}' at that time."]
+            
+            if next_slot:
+                # Format the next available time nicely
+                if isinstance(next_slot, datetime):
+                    time_str = next_slot.strftime('%I:%M %p')
+                    # Check if it's today or tomorrow
+                    now = datetime.now(next_slot.tzinfo) if next_slot.tzinfo else datetime.now()
+                    if next_slot.date() == now.date():
+                        date_str = "today"
+                    elif next_slot.date() == (now + timedelta(days=1)).date():
+                        date_str = "tomorrow"
+                    else:
+                        date_str = next_slot.strftime('%A, %B %d')
+                    duration_text = f"{default_duration}-minute" if default_duration != 30 else "30-minute"
+                    response_parts.append(f"Next available {duration_text} slot: {date_str} at {time_str}.")
+            
+            # Suggest moving the conflicting event
+            conflict_event_id = e.conflict_event.get('id')
+            if conflict_event_id:
+                response_parts.append(f"Or I can move '{e.event_title}' to make room.")
+            
+            response_parts.append("What would you like to do?")
+            
+            return {
+                "intent": "request_clarification",
+                "response": " ".join(response_parts),
+                "requires_confirmation": False
+            }
     elif intent == "move_event":
-        return await execute_move_event(user, entities)
+        try:
+            return await execute_move_event(user, entities, db)
+        except ConflictException as e:
+            # Get user preferences
+            preferences = _get_user_preferences(db, str(user.id))
+            default_duration = preferences.get('default_meeting_duration', {}).get('minutes', 30)
+            work_hours = preferences.get('work_hours')
+            
+            # Find next available slot using default duration
+            existing_events = await _fetch_events_for_day(user, e.requested_start)
+            # Search from after the conflicting event ends, or from requested start if event end is not available
+            search_from = e.conflict_event.get('end')
+            if not search_from:
+                search_from = e.requested_start
+            next_slot = _find_next_available_slot(existing_events, search_from, default_duration, work_hours=work_hours)
+            
+            # Build response with suggestions
+            response_parts = [f"You already have '{e.event_title}' at that time."]
+            
+            if next_slot:
+                # Format the next available time nicely
+                if isinstance(next_slot, datetime):
+                    time_str = next_slot.strftime('%I:%M %p')
+                    # Check if it's today or tomorrow
+                    now = datetime.now(next_slot.tzinfo) if next_slot.tzinfo else datetime.now()
+                    if next_slot.date() == now.date():
+                        date_str = "today"
+                    elif next_slot.date() == (now + timedelta(days=1)).date():
+                        date_str = "tomorrow"
+                    else:
+                        date_str = next_slot.strftime('%A, %B %d')
+                    duration_text = f"{default_duration}-minute" if default_duration != 30 else "30-minute"
+                    response_parts.append(f"Next available {duration_text} slot: {date_str} at {time_str}.")
+            
+            # Suggest moving the conflicting event
+            conflict_event_id = e.conflict_event.get('id')
+            if conflict_event_id:
+                response_parts.append(f"Or I can move '{e.event_title}' to make room.")
+            
+            response_parts.append("What would you like to do?")
+            
+            return {
+                "intent": "request_clarification",
+                "response": " ".join(response_parts),
+                "requires_confirmation": False
+            }
     elif intent == "update_event":
         return await execute_update_event(user, entities)
     elif intent == "cancel_event":
@@ -115,6 +440,8 @@ async def execute_single_action(db: AsyncSession, user: User, intent: str, entit
         return await execute_send_slack_message(db, user, entities)
     elif intent == "send_teams_message":
         return await execute_send_teams_message(user, entities)
+    elif intent == "update_user_preference":
+        return await execute_update_user_preference(db, user, entities)
     else:
         raise Exception(f"Unknown intent: {intent}")
 
@@ -156,7 +483,7 @@ async def execute_create_reminder(db: AsyncSession, user: User, entities: dict) 
     }
 
 
-async def execute_create_event(user: User, entities: dict) -> dict:
+async def execute_create_event(user: User, entities: dict, db: Optional[AsyncSession] = None) -> dict:
     """Create a calendar event from parsed entities."""
     if not user.google_access_token:
         raise Exception("Google Calendar not connected. Please connect your Google account in Settings.")
@@ -176,6 +503,13 @@ async def execute_create_event(user: User, entities: dict) -> dict:
     
     duration = entities.get("duration_minutes", 30)
     end_time = start_time + timedelta(minutes=duration)
+    
+    # Check for conflicts before scheduling
+    existing_events = await _fetch_events_for_day(user, start_time)
+    conflict = find_conflict(existing_events, start_time, duration)
+    if conflict:
+        conflict_summary = conflict.get('summary', 'an existing event')
+        raise ConflictException(conflict_summary, conflict, start_time, duration)
     
     # Validate attendees are email addresses if provided
     attendees = entities.get("attendees", [])
@@ -198,7 +532,7 @@ async def execute_create_event(user: User, entities: dict) -> dict:
     return {"event_id": event.get("id"), "summary": summary}
 
 
-async def execute_move_event(user: User, entities: dict) -> dict:
+async def execute_move_event(user: User, entities: dict, db: Optional[AsyncSession] = None) -> dict:
     """Move/update a calendar event."""
     if not user.google_access_token:
         raise Exception("Google Calendar not connected. Please connect your Google account in Settings.")
@@ -236,6 +570,14 @@ async def execute_move_event(user: User, entities: dict) -> dict:
         duration = timedelta(minutes=entities.get("duration_minutes", 30))
     
     end_time = new_time + duration
+    
+    # Check for conflicts before moving (exclude the event we're moving)
+    duration_minutes = int(duration.total_seconds() / 60)
+    existing_events = await _fetch_events_for_day(user, new_time, exclude_event_id=event_id)
+    conflict = find_conflict(existing_events, new_time, duration_minutes)
+    if conflict:
+        conflict_summary = conflict.get('summary', 'an existing event')
+        raise ConflictException(conflict_summary, conflict, new_time, duration_minutes)
     
     updates = {
         "start": {"dateTime": new_time.isoformat(), "timeZone": "UTC"},
@@ -576,6 +918,24 @@ async def execute_send_teams_message(user: User, entities: dict) -> dict:
             raise Exception(f"Teams chat '{chat_id}' not found. Please check the chat ID and try again.")
         else:
             raise Exception(f"Failed to send Teams message: {error_msg}")
+
+
+async def execute_update_user_preference(db: AsyncSession, user: User, entities: dict) -> dict:
+    """Update or create a user preference in memory."""
+    from ...crud.memory import upsert_memory
+    
+    await db.run_sync(lambda sync_db: upsert_memory(
+        sync_db,
+        user_id=str(user.id),
+        key=entities.get("preference_key"),
+        type_="preference",
+        value=entities.get("preference_value", {})
+    ))
+    
+    return {
+        "status": "updated",
+        "message": "Preference saved successfully."
+    }
 
     
 

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
+import httpx
 from ..schemas import UtteranceRequest, IntentResponse
 from ..deps import get_current_user
 from ...core.database import get_db
@@ -126,13 +127,32 @@ async def process_utterance(
     if any(keyword in text_lower for keyword in calendar_keywords):
         calendar_context = await get_user_calendar_context(user)
     
-    result = await parse_utterance(request.text, request.current_time, history, request.timezone or "UTC", calendar_context)
+    result = await parse_utterance(
+        request.text, 
+        request.current_time, 
+        history, 
+        request.timezone or "UTC", 
+        calendar_context,
+        db=db,
+        user_id=str(user.id)
+    )
     
     # Handle list_reminders intent specially
     if result.get("intent") == "list_reminders":
         reminders_text = await get_user_reminders_text(db, user.id)
         result["response"] = reminders_text
         result["requires_confirmation"] = False
+    
+    # Handle update_user_preference intent - execute immediately without confirmation
+    if result.get("intent") == "update_user_preference":
+        try:
+            from .action import execute_update_user_preference
+            action_result = await execute_update_user_preference(db, user, result.get("entities", {}))
+            result["response"] = action_result.get("message", "Preference saved successfully.")
+            result["requires_confirmation"] = False
+        except Exception as e:
+            result["response"] = f"I couldn't save that preference: {str(e)}"
+            result["requires_confirmation"] = False
     
     # Handle mark_emails_read intent - execute immediately without confirmation
     if result.get("intent") == "mark_emails_read":
@@ -259,6 +279,33 @@ async def process_utterance(
                 if len(outlook_emails) > 0:
                     api_available = True
                     emails.extend([{**e, "provider": "outlook"} for e in outlook_emails])
+                    print(f"Fetched {len(outlook_emails)} Outlook emails")
+            except httpx.HTTPStatusError as e:
+                # Token expired - try to refresh
+                if e.response.status_code == 401 and user.microsoft_refresh_token:
+                    try:
+                        new_tokens = await microsoft_integration.refresh_access_token(
+                            user.microsoft_refresh_token
+                        )
+                        user.microsoft_access_token = new_tokens["access_token"]
+                        if new_tokens.get("refresh_token"):
+                            user.microsoft_refresh_token = new_tokens["refresh_token"]
+                        await db.commit()
+                        
+                        # Retry with new token
+                        outlook_emails = await microsoft_integration.list_emails(
+                            user.microsoft_access_token,
+                            max_results=15,
+                            unread_only=True
+                        )
+                        if len(outlook_emails) > 0:
+                            api_available = True
+                            emails.extend([{**e, "provider": "outlook"} for e in outlook_emails])
+                            print(f"Fetched {len(outlook_emails)} Outlook emails after token refresh")
+                    except Exception as refresh_error:
+                        print(f"Error refreshing Microsoft token for Outlook: {refresh_error}")
+                else:
+                    print(f"Failed to fetch Outlook: {e}")
             except Exception as e:
                 print(f"Failed to fetch Outlook: {e}")
             
@@ -397,7 +444,13 @@ async def process_voice(
     # Fetch conversation history
     history = await get_conversation_history(db, user.id)
     
-    result = await parse_utterance(text, current_time, history)
+    result = await parse_utterance(
+        text, 
+        current_time, 
+        history,
+        db=db,
+        user_id=str(user.id)
+    )
     
     interaction = Interaction(
         user_id=user.id,

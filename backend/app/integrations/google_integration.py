@@ -326,10 +326,10 @@ async def get_email_count(access_token: str, refresh_token: str, unread_only: bo
         
         estimate = initial_results.get("resultSizeEstimate", 0)
         
-        # If estimate is small (< 100), count accurately
-        # If estimate is large, use estimate but verify with a sample
-        if estimate < 100:
-            # Count accurately for small numbers
+        # For unread emails, always count accurately (even if estimate is large)
+        # This ensures accurate counts for the daily digest
+        if unread_only:
+            # Count accurately for unread emails
             total_count = 0
             page_token = None
             
@@ -349,12 +349,40 @@ async def get_email_count(access_token: str, refresh_token: str, unread_only: bo
                 page_token = results.get("nextPageToken")
                 if not page_token:
                     break
+                
+                # Safety limit: stop after 20 pages (10,000 emails) to avoid infinite loops
+                if total_count >= 10000:
+                    break
             
             return total_count
         else:
-            # For large counts, use estimate but verify it's reasonable
-            # Gmail's estimate is usually within 10% of actual
-            return estimate
+            # For total emails, use estimate if large (> 100)
+            if estimate < 100:
+                # Count accurately for small numbers
+                total_count = 0
+                page_token = None
+                
+                while True:
+                    request_params = {
+                        "userId": "me",
+                        "q": query,
+                        "maxResults": 500
+                    }
+                    if page_token:
+                        request_params["pageToken"] = page_token
+                    
+                    results = service.users().messages().list(**request_params).execute()
+                    messages = results.get("messages", [])
+                    total_count += len(messages)
+                    
+                    page_token = results.get("nextPageToken")
+                    if not page_token:
+                        break
+                
+                return total_count
+            else:
+                # For large counts, use estimate
+                return estimate
     except Exception as e:
         print(f"Error getting email count: {e}")
         # Fallback to estimate if counting fails

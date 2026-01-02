@@ -161,8 +161,33 @@ async def get_daily_digest(
                         unread_only=True
                     )
                     emails.extend([{**e, "provider": "outlook"} for e in outlook_emails])
-                except:
-                    pass
+                    print(f"Fetched {len(outlook_emails)} Outlook emails for digest")
+                except httpx.HTTPStatusError as e:
+                    # Token expired - try to refresh
+                    if e.response.status_code == 401 and user.microsoft_refresh_token:
+                        try:
+                            new_tokens = await microsoft_integration.refresh_access_token(
+                                user.microsoft_refresh_token
+                            )
+                            user.microsoft_access_token = new_tokens["access_token"]
+                            if new_tokens.get("refresh_token"):
+                                user.microsoft_refresh_token = new_tokens["refresh_token"]
+                            await db.commit()
+                            
+                            # Retry with new token
+                            outlook_emails = await microsoft_integration.list_emails(
+                                user.microsoft_access_token,
+                                max_results=10,
+                                unread_only=True
+                            )
+                            emails.extend([{**e, "provider": "outlook"} for e in outlook_emails])
+                            print(f"Fetched {len(outlook_emails)} Outlook emails after token refresh")
+                        except Exception as refresh_error:
+                            print(f"Error refreshing Microsoft token for Outlook emails: {refresh_error}")
+                    else:
+                        print(f"Error fetching Outlook emails: {e}")
+                except Exception as e:
+                    print(f"Error fetching Outlook emails: {e}")
             
             if unread_teams > 0 and user.microsoft_access_token:
                 try:

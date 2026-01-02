@@ -12,7 +12,7 @@ export default function CommandWindow() {
   const [input, setInput] = useState('')
   const [showSettings, setShowSettings] = useState(false)
   const [copied, setCopied] = useState(false)
-  const [activeTab, setActiveTab] = useState<Tab>('chat')
+  const [activeTab, setActiveTab] = useState<Tab>('digest')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const { messages, isLoading, isRecording, sendMessage, startRecording, stopRecording, logout, confirmAction, sendEmail, clearHistory, toggleMiniMode } = useAppStore()

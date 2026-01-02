@@ -283,6 +283,15 @@ async def list_teams_messages(
                     "$select": "id,chatType,topic,unreadCount"
                 }
             )
+            
+            # Handle 401 Unauthorized - token expired
+            if chats_response.status_code == 401:
+                raise httpx.HTTPStatusError(
+                    "Token expired",
+                    request=chats_response.request,
+                    response=chats_response
+                )
+            
             chats_response.raise_for_status()
             chats = chats_response.json().get("value", [])
             
@@ -306,6 +315,15 @@ async def list_teams_messages(
                         headers=headers,
                         params=messages_params
                     )
+                    
+                    # Handle 401 Unauthorized - token expired
+                    if messages_response.status_code == 401:
+                        raise httpx.HTTPStatusError(
+                            "Token expired",
+                            request=messages_response.request,
+                            response=messages_response
+                        )
+                    
                     messages_response.raise_for_status()
                     chat_messages = messages_response.json().get("value", [])
                     
@@ -366,6 +384,15 @@ async def get_teams_message_count(access_token: str, unread_only: bool = False) 
                 headers=headers,
                 params={"$top": 50, "$select": "id,unreadCount"}
             )
+            
+            # Handle 401 Unauthorized - token expired
+            if chats_response.status_code == 401:
+                raise httpx.HTTPStatusError(
+                    "Token expired",
+                    request=chats_response.request,
+                    response=chats_response
+                )
+            
             chats_response.raise_for_status()
             chats = chats_response.json().get("value", [])
             

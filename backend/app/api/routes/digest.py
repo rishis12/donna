@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+import httpx
 from ..deps import get_current_user
 from ...core.database import get_db
 from ...models.user import User
@@ -93,14 +94,46 @@ async def get_daily_digest(
         
         # Outlook unread count
         if user.microsoft_access_token:
-            unread_emails_outlook = await microsoft_integration.get_email_count(
-                user.microsoft_access_token,
-                unread_only=True
-            )
-            unread_teams = await microsoft_integration.get_teams_message_count(
-                user.microsoft_access_token,
-                unread_only=True
-            )
+            try:
+                unread_emails_outlook = await microsoft_integration.get_email_count(
+                    user.microsoft_access_token,
+                    unread_only=True
+                )
+            except Exception as e:
+                print(f"Error getting Outlook email count: {e}")
+                unread_emails_outlook = 0
+            
+            try:
+                unread_teams = await microsoft_integration.get_teams_message_count(
+                    user.microsoft_access_token,
+                    unread_only=True
+                )
+            except httpx.HTTPStatusError as e:
+                # Token expired - try to refresh
+                if e.response.status_code == 401 and user.microsoft_refresh_token:
+                    try:
+                        new_tokens = await microsoft_integration.refresh_access_token(
+                            user.microsoft_refresh_token
+                        )
+                        user.microsoft_access_token = new_tokens["access_token"]
+                        if new_tokens.get("refresh_token"):
+                            user.microsoft_refresh_token = new_tokens["refresh_token"]
+                        await db.commit()
+                        
+                        # Retry with new token
+                        unread_teams = await microsoft_integration.get_teams_message_count(
+                            user.microsoft_access_token,
+                            unread_only=True
+                        )
+                    except Exception as refresh_error:
+                        print(f"Error refreshing Microsoft token: {refresh_error}")
+                        unread_teams = 0
+                else:
+                    print(f"Error getting Teams message count: {e}")
+                    unread_teams = 0
+            except Exception as e:
+                print(f"Error getting Teams message count: {e}")
+                unread_teams = 0
         
         # Get communications summary if there are unread items
         total_unread = unread_emails_gmail + unread_emails_outlook + unread_teams
@@ -138,8 +171,33 @@ async def get_daily_digest(
                         max_results=10,
                         unread_only=True
                     )
-                except:
-                    pass
+                except httpx.HTTPStatusError as e:
+                    # Token expired - try to refresh
+                    if e.response.status_code == 401 and user.microsoft_refresh_token:
+                        try:
+                            new_tokens = await microsoft_integration.refresh_access_token(
+                                user.microsoft_refresh_token
+                            )
+                            user.microsoft_access_token = new_tokens["access_token"]
+                            if new_tokens.get("refresh_token"):
+                                user.microsoft_refresh_token = new_tokens["refresh_token"]
+                            await db.commit()
+                            
+                            # Retry with new token
+                            teams_messages = await microsoft_integration.list_teams_messages(
+                                user.microsoft_access_token,
+                                max_results=10,
+                                unread_only=True
+                            )
+                        except Exception as refresh_error:
+                            print(f"Error refreshing Microsoft token for Teams messages: {refresh_error}")
+                            teams_messages = []
+                    else:
+                        print(f"Error fetching Teams messages: {e}")
+                        teams_messages = []
+                except Exception as e:
+                    print(f"Error fetching Teams messages: {e}")
+                    teams_messages = []
             
             if emails or teams_messages:
                 communications_summary = await summarize_communications(emails, teams_messages)

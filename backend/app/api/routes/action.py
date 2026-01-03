@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Dict, Any, Optional
 from datetime import datetime, timedelta, timezone
@@ -120,14 +120,15 @@ async def _fetch_events_for_day(user: User, target_date: datetime, exclude_event
 
 def _get_user_preferences(db: AsyncSession, user_id: str) -> dict:
     """
-    Fetch user preferences for work_hours and default_meeting_duration.
+    Fetch user preferences for work_hours, default_meeting_duration, and personality_tone.
     
     Returns:
-        dict with 'work_hours' and 'default_meeting_duration' keys, or None values if not set
+        dict with 'work_hours', 'default_meeting_duration', and 'personality_tone' keys, or None values if not set
     """
     preferences = {
         'work_hours': None,
-        'default_meeting_duration': None
+        'default_meeting_duration': None,
+        'personality_tone': None  # 0.0 = formal, 1.0 = spunky
     }
     
     try:
@@ -137,6 +138,8 @@ def _get_user_preferences(db: AsyncSession, user_id: str) -> dict:
                 preferences['work_hours'] = memory.value
             elif memory.key == "default_meeting_duration":
                 preferences['default_meeting_duration'] = memory.value
+            elif memory.key == "personality_tone":
+                preferences['personality_tone'] = memory.value
     except Exception as e:
         print(f"Error fetching user preferences: {e}")
     
@@ -448,11 +451,13 @@ async def execute_single_action(db: AsyncSession, user: User, intent: str, entit
 
 async def execute_create_reminder(db: AsyncSession, user: User, entities: dict) -> dict:
     """Create a reminder from parsed entities."""
-    text = entities.get("reminder_text", entities.get("body"))
+    # Support both LLM output format (text) and legacy format (reminder_text/body)
+    text = entities.get("text") or entities.get("reminder_text") or entities.get("body")
     if not text:
         raise Exception("Reminder text is required. What should I remind you about?")
     
-    time_str = entities.get("time") or entities.get("date")
+    # Support both LLM output format (due_time) and legacy format (time/date)
+    time_str = entities.get("due_time") or entities.get("time") or entities.get("date")
     if not time_str:
         raise Exception("Reminder time is required. When should I remind you?")
     
@@ -488,11 +493,13 @@ async def execute_create_event(user: User, entities: dict, db: Optional[AsyncSes
     if not user.google_access_token:
         raise Exception("Google Calendar not connected. Please connect your Google account in Settings.")
     
-    summary = entities.get("event_title", entities.get("subject"))
+    # Support both LLM output format (summary) and legacy format (event_title/subject)
+    summary = entities.get("summary") or entities.get("event_title") or entities.get("subject")
     if not summary:
         raise Exception("Meeting title is required. Please specify what the meeting is about.")
     
-    start_str = entities.get("time") or entities.get("date")
+    # Support both LLM output format (start_time) and legacy format (time/date)
+    start_str = entities.get("start_time") or entities.get("time") or entities.get("date")
     if not start_str:
         raise Exception("Meeting time is required. Please specify when the meeting should be scheduled.")
     
@@ -501,8 +508,18 @@ async def execute_create_event(user: User, entities: dict, db: Optional[AsyncSes
     except Exception as e:
         raise Exception(f"Could not parse time '{start_str}'. Please specify a valid date and time.")
     
-    duration = entities.get("duration_minutes", 30)
-    end_time = start_time + timedelta(minutes=duration)
+    # Support both LLM output format (end_time) and legacy format (duration_minutes)
+    end_str = entities.get("end_time")
+    if end_str:
+        try:
+            end_time = date_parser.parse(end_str)
+        except Exception:
+            # Fallback to duration if end_time parsing fails
+            duration = entities.get("duration_minutes", 30)
+            end_time = start_time + timedelta(minutes=duration)
+    else:
+        duration = entities.get("duration_minutes", 30)
+        end_time = start_time + timedelta(minutes=duration)
     
     # Check for conflicts before scheduling
     existing_events = await _fetch_events_for_day(user, start_time)
@@ -518,7 +535,8 @@ async def execute_create_event(user: User, entities: dict, db: Optional[AsyncSes
             if attendee and "@" not in attendee:
                 raise Exception(f"'{attendee}' is not a valid email address. Please provide email addresses for attendees.")
     
-    description = entities.get("body", "")
+    # Support both LLM output format (description) and legacy format (body)
+    description = entities.get("description") or entities.get("body", "")
     
     event = await google_integration.create_event(
         user.google_access_token,
@@ -541,7 +559,8 @@ async def execute_move_event(user: User, entities: dict, db: Optional[AsyncSessi
     if not event_id:
         raise Exception("I couldn't identify which event to move. Please try again and specify the event name or time.")
     
-    new_time_str = entities.get("time")
+    # Support both LLM output format (new_start_time) and legacy format (time)
+    new_time_str = entities.get("new_start_time") or entities.get("time")
     if not new_time_str:
         raise Exception("I need to know the new time for this event. What time would you like to move it to?")
     
@@ -569,7 +588,15 @@ async def execute_move_event(user: User, entities: dict, db: Optional[AsyncSessi
     except Exception as e:
         duration = timedelta(minutes=entities.get("duration_minutes", 30))
     
-    end_time = new_time + duration
+    # Support LLM output format (new_end_time) or calculate from duration
+    new_end_time_str = entities.get("new_end_time")
+    if new_end_time_str:
+        try:
+            end_time = date_parser.parse(new_end_time_str)
+        except Exception:
+            end_time = new_time + duration
+    else:
+        end_time = new_time + duration
     
     # Check for conflicts before moving (exclude the event we're moving)
     duration_minutes = int(duration.total_seconds() / 60)
@@ -936,6 +963,60 @@ async def execute_update_user_preference(db: AsyncSession, user: User, entities:
         "status": "updated",
         "message": "Preference saved successfully."
     }
+
+
+# API endpoint for updating personality preference
+@router.post("/preferences/personality")
+async def update_personality_preference(
+    tone: float = Query(..., ge=0.0, le=1.0),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """
+    Update personality tone preference.
+    tone: 0.0 (formal) to 1.0 (spunky)
+    """
+    from ...crud.memory import upsert_memory
+    
+    # Validate tone range
+    if tone < 0.0 or tone > 1.0:
+        raise HTTPException(status_code=400, detail="Tone must be between 0.0 and 1.0")
+    
+    await db.run_sync(lambda sync_db: upsert_memory(
+        sync_db,
+        user_id=str(user.id),
+        key="personality_tone",
+        type_="preference",
+        value={"tone": float(tone)}
+    ))
+    
+    return {
+        "status": "updated",
+        "message": "Personality preference saved successfully.",
+        "tone": tone
+    }
+
+
+@router.get("/preferences/personality")
+async def get_personality_preference(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """Get current personality tone preference."""
+    from ...crud.memory import get_active_memories_for_user
+    
+    try:
+        memories = await db.run_sync(lambda sync_db: get_active_memories_for_user(sync_db, user.id))
+        for memory in memories:
+            if memory.key == "personality_tone" and memory.value:
+                return {
+                    "tone": float(memory.value.get("tone", 0.5))
+                }
+    except Exception as e:
+        print(f"Error fetching personality preference: {e}")
+    
+    # Return default if not found
+    return {"tone": 0.5}
 
     
 

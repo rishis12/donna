@@ -19,8 +19,81 @@ from datetime import datetime, timezone
 
 router = APIRouter(prefix="/utterance", tags=["utterance"])
 
+
+async def _handle_calendar_intents(result: dict, user: User, db: AsyncSession) -> dict:
+    """Handle calendar-related intents - execute immediately if no confirmation needed."""
+    intent = result.get("intent")
+    
+    # Handle schedule_event intent
+    if intent == "schedule_event":
+        if not user.google_access_token:
+            result["response"] = "Google Calendar is not connected. Please connect your Google account in Settings."
+            result["requires_confirmation"] = False
+        elif not result.get("requires_confirmation", True):
+            try:
+                from .action import execute_create_event
+                entities = result.get("entities", {})
+                action_result = await execute_create_event(user, entities, db)
+                event_summary = action_result.get("summary", "the meeting")
+                result["response"] = result.get("response", f"Done! I've scheduled '{event_summary}'.")
+            except Exception as e:
+                error_msg = str(e)
+                if "already have" in error_msg.lower() or "conflict" in error_msg.lower():
+                    result["response"] = error_msg
+                else:
+                    result["response"] = f"I couldn't schedule that: {error_msg}"
+                result["requires_confirmation"] = False
+    
+    # Handle create_reminder intent
+    elif intent == "create_reminder":
+        if not result.get("requires_confirmation", True):
+            try:
+                from .action import execute_create_reminder
+                entities = result.get("entities", {})
+                action_result = await execute_create_reminder(db, user, entities)
+                result["response"] = result.get("response", f"Done! I'll remind you about '{action_result.get('text')}'.")
+            except Exception as e:
+                result["response"] = f"I couldn't create that reminder: {str(e)}"
+                result["requires_confirmation"] = False
+    
+    # Handle move_event intent
+    elif intent == "move_event":
+        if not user.google_access_token:
+            result["response"] = "Google Calendar is not connected. Please connect your Google account in Settings."
+            result["requires_confirmation"] = False
+        elif not result.get("requires_confirmation", True):
+            try:
+                from .action import execute_move_event
+                entities = result.get("entities", {})
+                action_result = await execute_move_event(user, entities, db)
+                result["response"] = action_result.get("message", result.get("response", "Event moved."))
+            except Exception as e:
+                error_msg = str(e)
+                if "already have" in error_msg.lower() or "conflict" in error_msg.lower():
+                    result["response"] = error_msg
+                else:
+                    result["response"] = f"I couldn't move that event: {error_msg}"
+                result["requires_confirmation"] = False
+    
+    # Handle cancel_event intent
+    elif intent == "cancel_event":
+        if not user.google_access_token:
+            result["response"] = "Google Calendar is not connected. Please connect your Google account in Settings."
+            result["requires_confirmation"] = False
+        elif not result.get("requires_confirmation", True):
+            try:
+                from .action import execute_cancel_event
+                entities = result.get("entities", {})
+                action_result = await execute_cancel_event(user, entities)
+                result["response"] = action_result.get("message", result.get("response", "Event cancelled."))
+            except Exception as e:
+                result["response"] = f"I couldn't cancel that event: {str(e)}"
+                result["requires_confirmation"] = False
+    
+    return result
+
 async def get_user_reminders_text(db: AsyncSession, user_id: str) -> str:
-    """Fetch user's active reminders and format as text."""
+    """Fetch user's active reminders and format as text in Donna's style."""
     result = await db.execute(
         select(Reminder)
         .where(Reminder.user_id == user_id)
@@ -30,12 +103,19 @@ async def get_user_reminders_text(db: AsyncSession, user_id: str) -> str:
     reminders = result.scalars().all()
     
     if not reminders:
-        return "You have no active reminders."
+        return "You're all caught up! No active reminders or tasks right now."
     
-    lines = ["Here are your active reminders:"]
-    for r in reminders:
+    # Format with Donna's personality
+    lines = []
+    if len(reminders) == 1:
+        r = reminders[0]
         time_str = r.due_time.strftime('%B %d at %I:%M %p')
-        lines.append(f"  • {r.text} — {time_str}")
+        lines.append(f"You have one reminder: {r.text} — {time_str}")
+    else:
+        lines.append(f"You have {len(reminders)} things on your list:")
+        for r in reminders:
+            time_str = r.due_time.strftime('%B %d at %I:%M %p')
+            lines.append(f"  • {r.text} — {time_str}")
     
     return "\n".join(lines)
 
@@ -245,8 +325,10 @@ async def process_utterance(
             result["response"] = "I need to know who to send the email to. Please provide the recipient's email address."
             result["requires_confirmation"] = False
     
+    # Handle calendar/reminder intents - execute immediately if no confirmation needed
+    result = await _handle_calendar_intents(result, user, db)
+    
     # Handle summarize_communications intent
-    if result.get("intent") == "summarize_communications":
         emails = []
         teams_messages = []
         slack_messages = []
@@ -391,8 +473,19 @@ async def process_utterance(
             result["response"] = result.get("response", "Email APIs are not yet implemented. Please check your inbox manually.")
             result["requires_confirmation"] = False
         else:
+            # Get personality tone preference
+            personality_tone = 0.5  # Default: balanced
+            try:
+                memories = await db.run_sync(lambda sync_db: get_active_memories_for_user(sync_db, user.id))
+                for memory in memories:
+                    if memory.key == "personality_tone" and memory.value:
+                        personality_tone = float(memory.value.get("tone", 0.5))
+                        break
+            except Exception as e:
+                print(f"Error fetching personality tone: {e}")
+            
             # Generate summary from actual data
-            summary = await summarize_communications(emails, teams_messages, slack_messages)
+            summary = await summarize_communications(emails, teams_messages, slack_messages, None, None, personality_tone)
             result["response"] = summary
             result["requires_confirmation"] = False
     
@@ -451,6 +544,9 @@ async def process_voice(
         db=db,
         user_id=str(user.id)
     )
+    
+    # Handle calendar/reminder intents - execute immediately if no confirmation needed
+    result = await _handle_calendar_intents(result, user, db)
     
     interaction = Interaction(
         user_id=user.id,

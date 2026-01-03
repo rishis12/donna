@@ -6,11 +6,17 @@ from ..deps import get_current_user
 from ...core.database import get_db
 from ...models.user import User
 from ...models.reminder import Reminder, ReminderStatus
+from ...models.messaging_account import MessagingAccount
 from ...integrations import google_integration, microsoft_integration
+from ...integrations.slack_integration import slack_integration
 from ...services.llm_service import summarize_communications
-from datetime import datetime, timedelta
+from ...crud.memory import get_active_memories_for_user
+from ...core.config import get_settings
+from ...core.security import decrypt_token
+from datetime import datetime, timedelta, timezone
 
 router = APIRouter(prefix="/digest", tags=["digest"])
+settings = get_settings()
 
 @router.get("/daily")
 async def get_daily_digest(
@@ -77,20 +83,25 @@ async def get_daily_digest(
                 "dueTime": due_time_iso
             })
     
-    # Get email and Teams message counts and summaries
+    # Get email, Teams, and Slack message counts and summaries
     unread_emails_gmail = 0
     unread_emails_outlook = 0
     unread_teams = 0
+    unread_slack = 0
     communications_summary = ""
     
     try:
         # Gmail unread count
         if user.google_access_token:
-            unread_emails_gmail = await google_integration.get_email_count(
-                user.google_access_token,
-                user.google_refresh_token,
-                unread_only=True
-            )
+            try:
+                unread_emails_gmail = await google_integration.get_email_count(
+                    user.google_access_token,
+                    user.google_refresh_token,
+                    unread_only=True
+                )
+            except Exception as e:
+                print(f"Error getting Gmail count: {e}")
+                unread_emails_gmail = 0
         
         # Outlook unread count
         if user.microsoft_access_token:
@@ -135,11 +146,45 @@ async def get_daily_digest(
                 print(f"Error getting Teams message count: {e}")
                 unread_teams = 0
         
+        # Get Slack message count
+        try:
+            # Get user's Slack messaging account
+            result_accounts = await db.execute(
+                select(MessagingAccount)
+                .where(MessagingAccount.platform == "slack")
+                .where(MessagingAccount.is_active == True)
+                .where(MessagingAccount.user_id == user.id)
+            )
+            slack_accounts = result_accounts.scalars().all()
+            
+            # Get bot token from user's account or settings
+            bot_token = None
+            for account in slack_accounts:
+                if account.bot_token:
+                    try:
+                        bot_token = decrypt_token(account.bot_token)
+                        break
+                    except Exception:
+                        pass
+            
+            if not bot_token:
+                bot_token = settings.slack_bot_token
+            
+            if bot_token:
+                # Get recent messages to estimate unread count
+                # Slack doesn't have a simple unread count API, so we count recent messages
+                recent_slack = await slack_integration.get_recent_messages(bot_token, max_messages=20)
+                unread_slack = len(recent_slack)
+        except Exception as e:
+            print(f"Error getting Slack message count: {e}")
+            unread_slack = 0
+        
         # Get communications summary if there are unread items
-        total_unread = unread_emails_gmail + unread_emails_outlook + unread_teams
+        total_unread = unread_emails_gmail + unread_emails_outlook + unread_teams + unread_slack
         if total_unread > 0:
             emails = []
             teams_messages = []
+            slack_messages = []
             
             if unread_emails_gmail > 0 and user.google_access_token:
                 try:
@@ -224,10 +269,62 @@ async def get_daily_digest(
                     print(f"Error fetching Teams messages: {e}")
                     teams_messages = []
             
-            if emails or teams_messages:
-                communications_summary = await summarize_communications(emails, teams_messages)
+            # Fetch Slack messages for summary
+            if unread_slack > 0:
+                try:
+                    # Get user's Slack bot token (already fetched above)
+                    result_accounts = await db.execute(
+                        select(MessagingAccount)
+                        .where(MessagingAccount.platform == "slack")
+                        .where(MessagingAccount.is_active == True)
+                        .where(MessagingAccount.user_id == user.id)
+                    )
+                    slack_accounts = result_accounts.scalars().all()
+                    
+                    bot_token = None
+                    for account in slack_accounts:
+                        if account.bot_token:
+                            try:
+                                bot_token = decrypt_token(account.bot_token)
+                                break
+                            except Exception:
+                                pass
+                    
+                    if not bot_token:
+                        bot_token = settings.slack_bot_token
+                    
+                    if bot_token:
+                        recent_msgs = await slack_integration.get_recent_messages(bot_token, max_messages=15)
+                        for msg in recent_msgs:
+                            slack_messages.append({
+                                "channel": msg.get("channel_id", ""),
+                                "channel_name": msg.get("channel_name", ""),
+                                "user": msg.get("user", ""),
+                                "username": msg.get("username", msg.get("user", "")),
+                                "text": msg.get("text", ""),
+                                "timestamp": datetime.fromtimestamp(float(msg.get("ts", 0)), tz=timezone.utc).isoformat() if msg.get("ts") else "",
+                                "message_id": msg.get("ts", "")
+                            })
+                except Exception as e:
+                    print(f"Error fetching Slack messages for summary: {e}")
+            
+            if emails or teams_messages or slack_messages:
+                # Get personality tone preference
+                personality_tone = 0.5  # Default: balanced
+                try:
+                    memories = await db.run_sync(lambda sync_db: get_active_memories_for_user(sync_db, user.id))
+                    for memory in memories:
+                        if memory.key == "personality_tone" and memory.value:
+                            personality_tone = float(memory.value.get("tone", 0.5))
+                            break
+                except Exception as e:
+                    print(f"Error fetching personality tone: {e}")
+                
+                communications_summary = await summarize_communications(emails, teams_messages, slack_messages, None, None, personality_tone)
     except Exception as e:
         print(f"Failed to fetch communications summary: {e}")
+        import traceback
+        traceback.print_exc()
     
     total_unread_emails = unread_emails_gmail + unread_emails_outlook
     
@@ -241,11 +338,12 @@ async def get_daily_digest(
         "unreadEmailsGmail": unread_emails_gmail,
         "unreadEmailsOutlook": unread_emails_outlook,
         "unreadTeams": unread_teams,
+        "unreadSlack": unread_slack,
         "communicationsSummary": communications_summary,
-        "summary": _generate_digest_summary(meetings, reminders, total_unread_emails, unread_teams)
+        "summary": _generate_digest_summary(meetings, reminders, total_unread_emails, unread_teams, unread_slack)
     }
 
-def _generate_digest_summary(meetings: list, reminders: list, unread_emails: int, unread_teams: int) -> str:
+def _generate_digest_summary(meetings: list, reminders: list, unread_emails: int, unread_teams: int, unread_slack: int = 0) -> str:
     """Generate a natural language summary of the daily digest."""
     parts = []
     
@@ -286,12 +384,14 @@ def _generate_digest_summary(meetings: list, reminders: list, unread_emails: int
     else:
         parts.append("no reminders")
     
-    if unread_emails > 0 or unread_teams > 0:
+    if unread_emails > 0 or unread_teams > 0 or unread_slack > 0:
         comm_parts = []
         if unread_emails > 0:
             comm_parts.append(f"{unread_emails} unread email{'s' if unread_emails != 1 else ''}")
         if unread_teams > 0:
-            comm_parts.append(f"{unread_teams} unread Teams message{'s' if unread_teams != 1 else ''}")
+            comm_parts.append(f"{unread_teams} Teams message{'s' if unread_teams != 1 else ''}")
+        if unread_slack > 0:
+            comm_parts.append(f"{unread_slack} Slack message{'s' if unread_slack != 1 else ''}")
         parts.append(", ".join(comm_parts))
     else:
         parts.append("all caught up on communications")

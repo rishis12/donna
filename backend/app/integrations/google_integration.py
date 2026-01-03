@@ -317,23 +317,14 @@ async def get_email_count(access_token: str, refresh_token: str, unread_only: bo
     query = "is:unread" if unread_only else ""
     
     try:
-        # First, get an estimate to see if we need to count
-        initial_results = service.users().messages().list(
-            userId="me",
-            q=query,
-            maxResults=1
-        ).execute()
-        
-        estimate = initial_results.get("resultSizeEstimate", 0)
-        
-        # For unread emails, always count accurately (even if estimate is large)
-        # This ensures accurate counts for the daily digest
+        # For unread emails, count accurately with a reasonable limit
         if unread_only:
-            # Count accurately for unread emails
             total_count = 0
             page_token = None
+            max_pages = 5  # Limit to 5 pages (2,500 emails max) for performance
+            pages_fetched = 0
             
-            while True:
+            while pages_fetched < max_pages:
                 request_params = {
                     "userId": "me",
                     "q": query,
@@ -345,56 +336,35 @@ async def get_email_count(access_token: str, refresh_token: str, unread_only: bo
                 results = service.users().messages().list(**request_params).execute()
                 messages = results.get("messages", [])
                 total_count += len(messages)
+                pages_fetched += 1
                 
                 page_token = results.get("nextPageToken")
                 if not page_token:
                     break
-                
-                # Safety limit: stop after 20 pages (10,000 emails) to avoid infinite loops
-                if total_count >= 10000:
-                    break
+            
+            # If we hit the limit and there are more pages, cap at a reasonable number
+            # This prevents showing inflated numbers like 10,000
+            if page_token and total_count >= 500:
+                # There are more emails, but we've counted enough
+                # Return the accurate count up to this point
+                print(f"[Gmail] Email count capped at {total_count} (more pages exist)")
             
             return total_count
         else:
-            # For total emails, use estimate if large (> 100)
-            if estimate < 100:
-                # Count accurately for small numbers
-                total_count = 0
-                page_token = None
-                
-                while True:
-                    request_params = {
-                        "userId": "me",
-                        "q": query,
-                        "maxResults": 500
-                    }
-                    if page_token:
-                        request_params["pageToken"] = page_token
-                    
-                    results = service.users().messages().list(**request_params).execute()
-                    messages = results.get("messages", [])
-                    total_count += len(messages)
-                    
-                    page_token = results.get("nextPageToken")
-                    if not page_token:
-                        break
-                
-                return total_count
-            else:
-                # For large counts, use estimate
-                return estimate
-    except Exception as e:
-        print(f"Error getting email count: {e}")
-        # Fallback to estimate if counting fails
-        try:
+            # For total emails, just get a quick estimate
             results = service.users().messages().list(
                 userId="me",
                 q=query,
                 maxResults=1
             ).execute()
-            return results.get("resultSizeEstimate", 0)
-        except:
-            return 0
+            estimate = results.get("resultSizeEstimate", 0)
+            # Cap the estimate at a reasonable number
+            return min(estimate, 9999)
+    except Exception as e:
+        print(f"Error getting email count: {e}")
+        import traceback
+        traceback.print_exc()
+        return 0
 
 async def mark_emails_as_read(
     access_token: str,

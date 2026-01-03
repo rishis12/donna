@@ -329,6 +329,7 @@ async def process_utterance(
     result = await _handle_calendar_intents(result, user, db)
     
     # Handle summarize_communications intent
+    if result.get("intent") == "summarize_communications":
         emails = []
         teams_messages = []
         slack_messages = []

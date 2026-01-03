@@ -513,6 +513,8 @@ async def execute_create_event(user: User, entities: dict, db: Optional[AsyncSes
     if end_str:
         try:
             end_time = date_parser.parse(end_str)
+            # Calculate duration from start and end times
+            duration = int((end_time - start_time).total_seconds() / 60)
         except Exception:
             # Fallback to duration if end_time parsing fails
             duration = entities.get("duration_minutes", 30)

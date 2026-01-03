@@ -21,28 +21,37 @@ router = APIRouter(prefix="/utterance", tags=["utterance"])
 
 
 async def _handle_calendar_intents(result: dict, user: User, db: AsyncSession) -> dict:
-    """Handle calendar-related intents - execute immediately if no confirmation needed."""
+    """Handle calendar-related intents - require confirmation for scheduling, execute others immediately."""
     intent = result.get("intent")
     
-    # Handle schedule_event intent
+    # Handle schedule_event intent - ALWAYS require confirmation
     if intent == "schedule_event":
         if not user.google_access_token:
             result["response"] = "Google Calendar is not connected. Please connect your Google account in Settings."
             result["requires_confirmation"] = False
-        elif not result.get("requires_confirmation", True):
+        else:
+            # Build a confirmation message with event details
+            entities = result.get("entities", {})
+            summary = entities.get("summary") or entities.get("event_title") or entities.get("subject") or "Meeting"
+            start_str = entities.get("start_time") or entities.get("time") or entities.get("date") or ""
+            
+            # Try to format the time nicely
             try:
-                from .action import execute_create_event
-                entities = result.get("entities", {})
-                action_result = await execute_create_event(user, entities, db)
-                event_summary = action_result.get("summary", "the meeting")
-                result["response"] = result.get("response", f"Done! I've scheduled '{event_summary}'.")
-            except Exception as e:
-                error_msg = str(e)
-                if "already have" in error_msg.lower() or "conflict" in error_msg.lower():
-                    result["response"] = error_msg
-                else:
-                    result["response"] = f"I couldn't schedule that: {error_msg}"
-                result["requires_confirmation"] = False
+                from dateutil import parser as date_parser
+                start_time = date_parser.parse(start_str)
+                formatted_time = start_time.strftime("%A, %B %d at %I:%M %p")
+            except:
+                formatted_time = start_str
+            
+            # Build confirmation message
+            attendees = entities.get("attendees", [])
+            if attendees:
+                attendee_str = ", ".join(attendees)
+                result["response"] = f"📅 Schedule '{summary}' for {formatted_time} with {attendee_str}?"
+            else:
+                result["response"] = f"📅 Schedule '{summary}' for {formatted_time}?"
+            
+            result["requires_confirmation"] = True
     
     # Handle create_reminder intent
     elif intent == "create_reminder":

@@ -8,9 +8,10 @@ A cross-platform desktop AI assistant that sits in your system tray and helps yo
 - 💬 **Natural Language** - Chat with your assistant naturally
 - 🎤 **Voice Input** - Push-to-talk microphone support
 - ⏰ **Reminders** - "Remind me at 3pm to email Sarah"
-- 📅 **Calendar** - "Move my 2pm meeting to Friday at 10"
+- 📅 **Calendar** - "Move my 2pm meeting to Friday at 10" (with confirmation before creating)
 - ✉️ **Email** - "Draft an email to my professor asking for an extension"
-- 🔐 **OAuth** - Google Calendar, Gmail, and Microsoft 365 support
+- 🔐 **OAuth** - Google Calendar, Gmail, Microsoft 365, and Slack support
+- 📊 **Daily Digest** - Morning briefing with emails, calendar, and messages from all platforms
 - 🔔 **Native Notifications** - Desktop alerts for due reminders
 - 🚀 **Auto-Launch** - Optional startup with your system
 
@@ -107,6 +108,16 @@ npm run tauri dev
 5. Create a client secret
 6. Copy Application ID and Secret to your `.env`
 
+### Slack
+
+1. Go to [Slack API](https://api.slack.com/apps)
+2. Create a new app
+3. Add OAuth scopes: `channels:history`, `channels:read`, `users:read`
+4. Add `http://localhost:8000/auth/slack/callback` as redirect URI
+5. Copy Client ID and Secret to your `.env`
+
+See `SETUP_SLACK.md` for detailed instructions.
+
 ## API Reference
 
 | Endpoint | Method | Description |
@@ -116,6 +127,8 @@ npm run tauri dev
 | `/auth/me` | GET | Get current user |
 | `/auth/google` | GET | Start Google OAuth |
 | `/auth/microsoft` | GET | Start Microsoft OAuth |
+| `/auth/slack` | GET | Start Slack OAuth |
+| `/digest/summary` | GET | Get daily digest with emails, calendar, messages |
 | `/utterance/process` | POST | Process text command |
 | `/utterance/voice` | POST | Process voice command |
 | `/action/confirm` | POST | Confirm/cancel pending action |
@@ -154,7 +167,8 @@ desktop-ai-agent/
 │   │   │   └── reminder_service.py
 │   │   └── integrations/
 │   │       ├── google_integration.py
-│   │       └── microsoft_integration.py
+│   │       ├── microsoft_integration.py
+│   │       └── slack_integration.py
 │   └── requirements.txt
 ├── desktop/                    # Tauri app
 │   ├── src/

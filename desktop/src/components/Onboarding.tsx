@@ -199,15 +199,16 @@ export default function Onboarding() {
 
         <button
           onClick={handleContinue}
-          disabled={!allConnected}
-          className="w-full bg-primary-400 hover:bg-primary-500 disabled:bg-surface-200 disabled:text-surface-400 text-white font-medium py-3.5 rounded-2xl flex items-center justify-center gap-2 transition-all"
+          className="w-full bg-primary-400 hover:bg-primary-500 text-white font-medium py-3.5 rounded-2xl flex items-center justify-center gap-2 transition-all"
         >
-          Continue
+          {googleConnected || slackConnected ? 'Continue' : 'Skip for now'}
           <ArrowRight className="w-4 h-4" />
         </button>
 
         <p className="text-surface-400 text-xs text-center mt-4">
-          You can connect additional services later in Settings
+          {googleConnected || slackConnected
+            ? 'You can connect additional services later in Settings'
+            : 'Connect at least one service to get the most out of Donna, or skip and set up later'}
         </p>
       </div>
     </div>

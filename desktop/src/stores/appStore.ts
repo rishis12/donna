@@ -1,6 +1,29 @@
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { persist, createJSONStorage } from 'zustand/middleware'
 import { api } from '../lib/api'
+
+// Custom storage with Date serialization/deserialization
+const customStorage = {
+  getItem: (name: string) => {
+    const str = localStorage.getItem(name)
+    if (!str) return null
+    const parsed = JSON.parse(str)
+    // Convert date strings back to Date objects in todos
+    if (parsed?.state?.todos) {
+      parsed.state.todos = parsed.state.todos.map((todo: any) => ({
+        ...todo,
+        createdAt: todo.createdAt ? new Date(todo.createdAt) : new Date()
+      }))
+    }
+    return parsed
+  },
+  setItem: (name: string, value: any) => {
+    localStorage.setItem(name, JSON.stringify(value))
+  },
+  removeItem: (name: string) => {
+    localStorage.removeItem(name)
+  }
+}
 
 interface Message {
   id: string
@@ -176,12 +199,20 @@ export const useAppStore = create<AppState>()(
       },
 
       checkAuth: async () => {
-        const { token } = get()
+        const { token, fetchReminders, fetchDailyDigest } = get()
         if (token) {
           api.setToken(token)
           try {
             const user = await api.get('/auth/me')
-            set({ 
+            // Set a greeting message if messages are empty
+            const currentMessages = get().messages
+            const greeting: Message = {
+              id: crypto.randomUUID(),
+              role: 'assistant',
+              content: "Hey there. I'm Donna — your schedule, your emails, your reminders? Consider them handled. What do you need?",
+              timestamp: new Date()
+            }
+            set({
               isAuthenticated: true,
               user: {
                 email: user.email,
@@ -189,8 +220,12 @@ export const useAppStore = create<AppState>()(
                 microsoftConnected: user.microsoft_connected,
                 slackConnected: user.slack_connected,
                 onboardingComplete: user.onboarding_complete || false
-              }
+              },
+              messages: currentMessages.length === 0 ? [greeting] : currentMessages
             })
+            // Fetch reminders and digest after authentication
+            fetchReminders()
+            fetchDailyDigest()
           } catch (error) {
             // Token is invalid, clear it
             api.setToken(null)
@@ -600,9 +635,10 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'agent-storage',
-      partialize: (state) => ({ 
+      storage: createJSONStorage(() => customStorage),
+      partialize: (state) => ({
         token: state.token,
-        todos: state.todos 
+        todos: state.todos
       })
     }
   )

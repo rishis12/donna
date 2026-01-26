@@ -54,7 +54,13 @@ Personality & Tone (Donna Paulsen style):
 
 """
 
-SYSTEM_PROMPT = """You are Donna, an executive assistant. Understand the user's request and determine what action to take.
+SYSTEM_PROMPT = """You are Donna, an executive assistant. Your job is to understand user requests and take appropriate actions.
+
+REASONING PROCESS (follow this for EVERY request):
+1. UNDERSTAND: What is the user actually asking for? Read carefully.
+2. IDENTIFY: Does this require an action, or is it just conversation/question?
+3. VALIDATE: Do I have ALL required information to complete this action?
+4. DECIDE: If missing info → ask for clarification. If complete → execute action.
 
 Return ONLY valid JSON in this format:
 {
@@ -81,21 +87,34 @@ Available action types:
 - summarize_communications: null (no params, just fetch and summarize)
 - update_user_preference: {preference_key: "...", preference_value: {...}}
 
-Rules:
-- If action is null, just respond conversationally (small_talk)
-- If user asks a question or wants info, set action to null and provide response
-- For destructive actions (delete_emails), set requires_confirmation: true
-- Never schedule in the past
-- If time is missing/unclear, set action to null and ask for clarification in response
-- Use USER_PREFERENCES if provided
-- Extract all relevant details into action.params
+CRITICAL RULES:
+1. NEVER GUESS missing information - always ask for clarification
+2. If user says "schedule a meeting" without a time → ask "What time?"
+3. If user says "remind me" without a time → ask "When should I remind you?"
+4. If user mentions a person without email → ask for their email address
+5. For destructive actions (delete_emails, cancel_event) → requires_confirmation: true
+6. Never schedule events in the past
+7. If action is null, provide a helpful conversational response
+8. Use USER_PREFERENCES for default values (meeting duration, work hours) when provided
+
+DISAMBIGUATION:
+- "remind me tomorrow" without time → ask "What time tomorrow?"
+- "schedule with John" without time → ask "What day and time?"
+- "send email to boss" without email → ask "What's your boss's email address?"
+- Ambiguous names → ask "Which [name] do you mean?"
 
 Examples:
 User: "mark all emails as read"
-→ {"action": {"type": "mark_emails_read", "params": {"all": true}}, "response": "Marked all emails as read.", "requires_confirmation": false}
+→ {"action": {"type": "mark_emails_read", "params": {"all": true}}, "response": "Done! All emails marked as read.", "requires_confirmation": false}
 
 User: "schedule a meeting with John tomorrow at 2pm"
 → {"action": {"type": "schedule_event", "params": {"summary": "Meeting with John", "start_time": "2026-01-03T14:00:00", "end_time": "2026-01-03T14:30:00", "attendees": ["john@example.com"]}}, "response": "Scheduled a meeting with John for tomorrow at 2 PM.", "requires_confirmation": false}
+
+User: "schedule a meeting with Sarah"
+→ {"action": null, "response": "Sure! What day and time works for you?", "requires_confirmation": false}
+
+User: "remind me to call mom"
+→ {"action": null, "response": "I can set that reminder. When would you like me to remind you?", "requires_confirmation": false}
 
 User: "what's on my calendar?"
 → {"action": null, "response": "Let me check your calendar...", "requires_confirmation": false}
@@ -192,9 +211,9 @@ CRITICAL RULES:
             {"role": "system", "content": full_context}
         ]
 
-        # Add conversation history (last 2 exchanges) - formatted as context
+        # Add conversation history (last 5 exchanges) - formatted as context for better reasoning
         if conversation_history:
-            for msg in conversation_history[-2:]:
+            for msg in conversation_history[-5:]:
                 # Format previous exchanges simply
                 messages.append({"role": "user", "content": msg["user"]})
                 # Previous assistant responses should be the JSON they returned
@@ -211,13 +230,14 @@ CRITICAL RULES:
         print(f"[LLM] Sending request for: '{utterance}'")
 
         # Try with 70B model first, fallback to 8B on rate limit
+        # Lower temperature (0.2) for more consistent intent detection and reasoning
         model = "llama-3.3-70b-versatile"
         try:
             response = client.chat.completions.create(
                 model=model,
                 messages=messages,
-                temperature=0.5,
-                max_tokens=300  # Reduced from 1000 - sufficient for JSON intent parsing
+                temperature=0.2,
+                max_tokens=400  # Slightly increased for more detailed reasoning responses
             )
         except Exception as e:
             # If rate limit error, fallback to cheaper 8B model
@@ -229,8 +249,8 @@ CRITICAL RULES:
                 response = client.chat.completions.create(
                     model=model,
                     messages=messages,
-                    temperature=0.5,
-                    max_tokens=300
+                    temperature=0.2,
+                    max_tokens=400
                 )
             else:
                 raise

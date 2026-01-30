@@ -20,8 +20,8 @@ A cross-platform desktop AI assistant that sits in your system tray and helps yo
 - **Desktop**: Tauri (Rust + TypeScript/React)
 - **Backend**: FastAPI (Python)
 - **Database**: SQLite (local) / PostgreSQL (cloud)
-- **LLM**: OpenAI GPT-4o
-- **STT**: OpenAI Whisper
+- **LLM**: Groq (Llama 3.3 70B with fallback to Llama 3.1 8B)
+- **STT**: Groq Whisper Large v3
 - **UI**: TailwindCSS + Zustand
 
 ## Quick Start
@@ -31,7 +31,7 @@ A cross-platform desktop AI assistant that sits in your system tray and helps yo
 - Node.js 18+
 - Python 3.10+
 - Rust (for Tauri) - Install from [rustup.rs](https://rustup.rs)
-- OpenAI API Key
+- Groq API Key
 
 ### 1. Backend Setup
 
@@ -51,7 +51,7 @@ pip install -r requirements.txt
 # Configure environment
 # Create .env file with:
 # SECRET_KEY=your-secret-key
-# OPENAI_API_KEY=sk-your-openai-key
+# GROQ_API_KEY=your-groq-api-key
 # GOOGLE_CLIENT_ID=your-google-client-id
 # GOOGLE_CLIENT_SECRET=your-google-secret
 
@@ -163,7 +163,7 @@ desktop-ai-agent/
 │   │   │   └── security.py    # JWT + encryption
 │   │   ├── models/            # SQLAlchemy models
 │   │   ├── services/
-│   │   │   ├── llm_service.py # OpenAI integration
+│   │   │   ├── llm_service.py # Groq/Llama integration
 │   │   │   └── reminder_service.py
 │   │   └── integrations/
 │   │       ├── google_integration.py
@@ -228,7 +228,7 @@ desktop-ai-agent/
 
 **Voice input not working:**
 - Allow microphone access when prompted
-- Ensure backend is running and OpenAI key is valid
+- Ensure backend is running and Groq API key is valid
 
 **OAuth not working:**
 - Verify redirect URIs match exactly

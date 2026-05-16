@@ -1,5 +1,4 @@
-from sqlalchemy import Column, String, DateTime, Boolean, ForeignKey, Float
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy import Column, String, DateTime, Boolean, ForeignKey, Float, JSON
 from sqlalchemy.sql import func
 import uuid
 from ..db.base import Base
@@ -15,7 +14,7 @@ class UserMemory(Base):
 
     type = Column(String, nullable=False)  # "preference" | "habit" | "fact"
     key = Column(String, nullable=False)
-    value = Column(JSONB, nullable=False)
+    value = Column(JSON, nullable=False)
 
     confidence = Column(Float, default=0.8)
     is_active = Column(Boolean, default=True)

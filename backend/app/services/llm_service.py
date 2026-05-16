@@ -1,4 +1,4 @@
-from groq import Groq
+import google.generativeai as genai
 import json
 from ..core.config import get_settings
 from datetime import datetime
@@ -11,7 +11,13 @@ from ..crud.memory import get_active_memories_for_user
 from ..llm.memory_context import render_memory_context
 
 settings = get_settings()
-client = Groq(api_key=settings.groq_api_key)
+
+# Configure Gemini
+genai.configure(api_key=settings.gemini_api_key)
+
+# Initialize models
+PRIMARY_MODEL = "gemini-1.5-flash"
+FALLBACK_MODEL = "gemini-1.5-flash"  # Same model, Gemini has generous rate limits
 
 
 def _build_personality_prompt(tone: float) -> str:
@@ -125,10 +131,10 @@ JSON only. No extra text.
 
 
 async def parse_utterance(
-    utterance: str, 
-    current_time: str, 
-    conversation_history: list = None, 
-    timezone: str = "UTC", 
+    utterance: str,
+    current_time: str,
+    conversation_history: list = None,
+    timezone: str = "UTC",
     calendar_context: str = "",
     db: Optional[AsyncSession] = None,
     user_id: Optional[str] = None
@@ -167,7 +173,7 @@ async def parse_utterance(
         example_5min = (local_now + timedelta(minutes=5)).isoformat()
         example_30min = (local_now + timedelta(minutes=30)).isoformat()
         example_1hour = (local_now + timedelta(hours=1)).isoformat()
-        
+
         time_context = f"""
 CURRENT TIME (CRITICAL - USE THIS FOR ALL TIME CALCULATIONS):
 - Local timezone: {timezone}
@@ -203,59 +209,55 @@ CRITICAL RULES:
                 print(f"Error fetching user memories: {e}")
                 memories = []
         memory_context = render_memory_context(memories)
-        
+
         # Build personality prompt based on tone
         personality_prompt = _build_personality_prompt(personality_tone)
         full_context = SYSTEM_PROMPT + personality_prompt + time_context + calendar_context + memory_context
-        messages = [
-            {"role": "system", "content": full_context}
-        ]
 
-        # Add conversation history (last 5 exchanges) - formatted as context for better reasoning
+        # Build conversation for Gemini
+        chat_history = []
+
+        # Add conversation history (last 5 exchanges)
         if conversation_history:
             for msg in conversation_history[-5:]:
-                # Format previous exchanges simply
-                messages.append({"role": "user", "content": msg["user"]})
-                # Previous assistant responses should be the JSON they returned
-                messages.append({"role": "assistant", "content": json.dumps({
+                chat_history.append({"role": "user", "parts": [msg["user"]]})
+                chat_history.append({"role": "model", "parts": [json.dumps({
                     "intent": "small_talk",
                     "entities": {},
                     "response": msg["assistant"],
                     "requires_confirmation": False
-                })})
-
-        # Add current user message
-        messages.append({"role": "user", "content": utterance})
+                })]})
 
         print(f"[LLM] Sending request for: '{utterance}'")
 
-        # Try with 70B model first, fallback to 8B on rate limit
-        # Lower temperature (0.2) for more consistent intent detection and reasoning
-        model = "llama-3.3-70b-versatile"
-        try:
-            response = client.chat.completions.create(
-                model=model,
-                messages=messages,
+        # Create model with system instruction
+        model = genai.GenerativeModel(
+            model_name=PRIMARY_MODEL,
+            system_instruction=full_context,
+            generation_config=genai.GenerationConfig(
                 temperature=0.2,
-                max_tokens=400  # Slightly increased for more detailed reasoning responses
+                max_output_tokens=400
             )
+        )
+
+        try:
+            # Start chat with history
+            chat = model.start_chat(history=chat_history)
+            response = chat.send_message(utterance)
+            text = response.text.strip()
         except Exception as e:
-            # If rate limit error, fallback to cheaper 8B model
             error_str = str(e).lower()
-            error_type = type(e).__name__.lower()
-            if "rate limit" in error_str or "429" in error_str or "quota" in error_str or "ratelimit" in error_type:
-                print(f"[LLM] Rate limit hit, falling back to 8B model")
-                model = "llama-3.1-8b-instant"  # Correct model name for Groq 8B model
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    temperature=0.2,
-                    max_tokens=400
-                )
+            if "rate limit" in error_str or "429" in error_str or "quota" in error_str:
+                print(f"[LLM] Rate limit hit, retrying with same model")
+                # Gemini has generous limits, just retry
+                import asyncio
+                await asyncio.sleep(1)
+                chat = model.start_chat(history=chat_history)
+                response = chat.send_message(utterance)
+                text = response.text.strip()
             else:
                 raise
 
-        text = response.choices[0].message.content.strip()
         print(f"[LLM] Raw response: {text[:300]}...")
 
         # Clean up response if it has markdown code blocks
@@ -277,7 +279,7 @@ CRITICAL RULES:
                 text = text[start:end+1]
 
         result = json.loads(text)
-        
+
         # Convert new format to old format for backward compatibility
         # New format: {action: {type, params}, response, requires_confirmation}
         # Old format: {intent, entities, response, requires_confirmation}
@@ -301,7 +303,7 @@ CRITICAL RULES:
                     "response": result.get("response", ""),
                     "requires_confirmation": False
                 }
-        
+
         # Already in old format, return as-is
         print(f"[LLM] Parsed intent: {result.get('intent')}")
         return result
@@ -337,21 +339,21 @@ async def draft_email_content(to: str, subject_hint: str, context: str) -> dict:
         avoid_dear = "no dear" in context.lower() or "without dear" in context.lower() or "don't use dear" in context.lower() or "no 'dear'" in context.lower()
         include_tagline = "sent with donna" in context.lower() or "tagline" in context.lower() or "include donna" in context.lower()
         brief = "brief" in context.lower() or "short" in context.lower()
-        
+
         # If context is very specific and user wants it as-is, and no special formatting needed
         if context and len(context) > 50 and not avoid_dear and not include_tagline and ("Dear" in context or "Hi" in context or "Hello" in context):
             return {
                 "subject": subject_hint or "No subject",
                 "body": context
             }
-        
+
         # Build prompt with user's instructions
         prompt = f"Draft a professional email to {to}."
         if subject_hint:
             prompt += f" Subject: {subject_hint}."
         if context:
             prompt += f" Message/content to include: {context}"
-        
+
         # Add formatting instructions
         format_instructions = []
         if avoid_dear:
@@ -360,43 +362,23 @@ async def draft_email_content(to: str, subject_hint: str, context: str) -> dict:
             format_instructions.append("Keep it brief and concise")
         if include_tagline:
             format_instructions.append('Include "Sent with Donna" as a tagline at the end')
-        
+
         if format_instructions:
             prompt += f" Formatting instructions: {', '.join(format_instructions)}."
-        
-        prompt += " Return ONLY valid JSON with 'subject' and 'body' fields. Write naturally, not overly formal unless requested."
-        
-        # Try 70B, fallback to 8B on rate limit
-        model = "llama-3.3-70b-versatile"
-        try:
-            response = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": "You are an email drafting assistant. Write clear, concise emails. Follow user's formatting instructions exactly. Always return valid JSON with 'subject' and 'body' fields only. No markdown. If user says 'no Dear', do not include any greeting."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.7,
-                max_tokens=400  # Reduced from 800
-            )
-        except Exception as e:
-            error_str = str(e).lower()
-            error_type = type(e).__name__.lower()
-            if "rate limit" in error_str or "429" in error_str or "quota" in error_str or "ratelimit" in error_type:
-                print(f"[LLM] Rate limit hit, falling back to 8B model for email draft")
-                model = "llama-3.1-8b-instant"  # Correct model name for Groq 8B model
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=[
-                        {"role": "system", "content": "You are an email drafting assistant. Write clear, concise emails. Follow user's formatting instructions exactly. Always return valid JSON with 'subject' and 'body' fields only. No markdown. If user says 'no Dear', do not include any greeting."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=0.7,
-                    max_tokens=400
-                )
-            else:
-                raise
 
-        text = response.choices[0].message.content.strip()
+        prompt += " Return ONLY valid JSON with 'subject' and 'body' fields. Write naturally, not overly formal unless requested."
+
+        model = genai.GenerativeModel(
+            model_name=PRIMARY_MODEL,
+            system_instruction="You are an email drafting assistant. Write clear, concise emails. Follow user's formatting instructions exactly. Always return valid JSON with 'subject' and 'body' fields only. No markdown. If user says 'no Dear', do not include any greeting.",
+            generation_config=genai.GenerationConfig(
+                temperature=0.7,
+                max_output_tokens=400
+            )
+        )
+
+        response = model.generate_content(prompt)
+        text = response.text.strip()
 
         # Clean up response if it has markdown code blocks
         if '```' in text:
@@ -421,10 +403,10 @@ async def draft_email_content(to: str, subject_hint: str, context: str) -> dict:
             result["subject"] = subject_hint or "No subject"
         if not result.get("body"):
             result["body"] = context or ""
-        
+
         # Post-process to ensure user's instructions are followed
         body = result.get("body", "")
-        
+
         # Remove "Dear" if user requested
         if avoid_dear:
             body = body.replace("Dear ", "").replace("Dear,", "").replace("Dear, ", "").strip()
@@ -432,11 +414,11 @@ async def draft_email_content(to: str, subject_hint: str, context: str) -> dict:
             for greeting in ["Hi ", "Hello ", "Hey ", "Hi,", "Hello,", "Hey,"]:
                 if body.startswith(greeting):
                     body = body[len(greeting):].strip()
-        
+
         # Add tagline if requested
         if include_tagline and "Sent with Donna" not in body and "sent with donna" not in body.lower():
             body += "\n\nSent with Donna"
-        
+
         result["body"] = body.strip()
 
         return result
@@ -457,15 +439,39 @@ async def draft_email_content(to: str, subject_hint: str, context: str) -> dict:
 
 
 async def transcribe_audio(audio_data: bytes) -> str:
-    # Groq supports Whisper!
+    """
+    Transcribe audio using Gemini's multimodal capabilities.
+    Falls back to Groq Whisper if available.
+    """
     try:
-        transcription = client.audio.transcriptions.create(
-            model="whisper-large-v3",
-            file=("audio.webm", audio_data)
-        )
-        return transcription.text
-    except Exception as e:
-        return f"Error transcribing audio: {str(e)}"
+        # Try Gemini multimodal transcription first
+        model = genai.GenerativeModel(model_name="gemini-1.5-flash")
+
+        # Gemini can process audio directly
+        response = model.generate_content([
+            "Transcribe this audio accurately. Return only the transcribed text, nothing else.",
+            {"mime_type": "audio/webm", "data": base64.b64encode(audio_data).decode()}
+        ])
+
+        return response.text.strip()
+    except Exception as gemini_error:
+        print(f"Gemini audio transcription failed: {gemini_error}")
+
+        # Fallback to Groq Whisper if API key is available
+        if settings.groq_api_key:
+            try:
+                from groq import Groq
+                groq_client = Groq(api_key=settings.groq_api_key)
+                transcription = groq_client.audio.transcriptions.create(
+                    model="whisper-large-v3",
+                    file=("audio.webm", audio_data)
+                )
+                return transcription.text
+            except Exception as groq_error:
+                print(f"Groq Whisper transcription also failed: {groq_error}")
+                return f"Error transcribing audio: {str(groq_error)}"
+
+        return f"Error transcribing audio: {str(gemini_error)}"
 
 
 def _post_process_summary(summary: str, max_lines: int = 12) -> str:
@@ -478,20 +484,20 @@ def _post_process_summary(summary: str, max_lines: int = 12) -> str:
     """
     if not summary:
         return summary
-    
+
     import re
-    
+
     # Split by lines to preserve structure
     lines = summary.split('\n')
-    
+
     # Process lines while preserving platform headers
     processed_lines = []
-    
+
     for line in lines:
         line = line.strip()
         if not line:
             continue
-        
+
         # Check if this is a platform header (Gmail:, Outlook:, Teams:, Slack:)
         header_match = re.match(r'^(Gmail|Outlook|Teams|Slack):\s*$', line, re.IGNORECASE)
         if header_match:
@@ -499,21 +505,21 @@ def _post_process_summary(summary: str, max_lines: int = 12) -> str:
             platform = header_match.group(1)
             processed_lines.append(f"<strong>{platform}:</strong>")
             continue
-        
+
         # Regular content line - preserve HTML <b> tags
         # Convert **markdown** to <b>HTML</b> if present
         line = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', line)
-        
+
         # Clean up extra whitespace but keep HTML tags
         line = re.sub(r'\s+', ' ', line)
-        
+
         # Ensure bullet points are preserved
         if not line.startswith('•') and not line.startswith('-') and not line.startswith('*'):
             # Add bullet if missing (for non-header lines)
             line = '• ' + line
-        
+
         processed_lines.append(line)
-    
+
     # Limit to max_lines, but try to keep complete platform sections
     if len(processed_lines) > max_lines:
         # Try to keep at least one complete platform section
@@ -523,7 +529,7 @@ def _post_process_summary(summary: str, max_lines: int = 12) -> str:
             if '<strong>' in processed_lines[i] and ':</strong>' in processed_lines[i]:
                 last_header_idx = i
                 break
-        
+
         if last_header_idx >= 0:
             # Keep everything up to and including the last complete section
             # But limit to max_lines
@@ -531,7 +537,7 @@ def _post_process_summary(summary: str, max_lines: int = 12) -> str:
         else:
             # No header found, just truncate
             processed_lines = processed_lines[:max_lines]
-    
+
     return '\n'.join(processed_lines).strip()
 
 
@@ -542,11 +548,11 @@ def _parse_timestamp(timestamp_str: str) -> Optional[datetime]:
     """
     if not timestamp_str:
         return None
-    
+
     # If it's already a datetime object, return it
     if isinstance(timestamp_str, datetime):
         return timestamp_str
-    
+
     # Try ISO 8601 format first (most common for APIs)
     try:
         # Handle both with and without timezone
@@ -555,21 +561,21 @@ def _parse_timestamp(timestamp_str: str) -> Optional[datetime]:
         return datetime.fromisoformat(timestamp_str)
     except (ValueError, AttributeError):
         pass
-    
+
     # Try RFC 2822 format (email headers)
     try:
         from email.utils import parsedate_to_datetime
         return parsedate_to_datetime(timestamp_str)
     except (ValueError, TypeError, AttributeError):
         pass
-    
+
     # Try Unix timestamp (numeric string)
     try:
         if timestamp_str.replace('.', '').isdigit():
             return datetime.fromtimestamp(float(timestamp_str), tz=pytz.UTC)
     except (ValueError, OSError, AttributeError):
         pass
-    
+
     return None
 
 
@@ -577,7 +583,7 @@ async def summarize_communications(emails: list, teams_messages: list, slack_mes
     """
     Use LLM to create an intelligent summary of emails, Teams messages, and Slack messages.
     Acts like a real assistant briefing the user.
-    
+
     Args:
         emails: List of email dictionaries with 'date' field
         teams_messages: List of Teams message dictionaries with 'date' field
@@ -588,13 +594,13 @@ async def summarize_communications(emails: list, teams_messages: list, slack_mes
     """
     if slack_messages is None:
         slack_messages = []
-    
+
     # Filter items by timestamp if last_digest_at is provided
     if last_digest_at is not None:
         # Normalize last_digest_at to timezone-aware datetime
         if last_digest_at.tzinfo is None:
             last_digest_at = pytz.UTC.localize(last_digest_at)
-        
+
         # Filter emails
         filtered_emails = []
         for email in emails:
@@ -609,7 +615,7 @@ async def summarize_communications(emails: list, teams_messages: list, slack_mes
                     if parsed_date > last_digest_at:
                         filtered_emails.append(email)
         emails = filtered_emails
-        
+
         # Filter Teams messages
         filtered_teams = []
         for msg in teams_messages:
@@ -624,7 +630,7 @@ async def summarize_communications(emails: list, teams_messages: list, slack_mes
                     if parsed_date > last_digest_at:
                         filtered_teams.append(msg)
         teams_messages = filtered_teams
-        
+
         # Filter Slack messages
         filtered_slack = []
         for msg in slack_messages:
@@ -639,7 +645,7 @@ async def summarize_communications(emails: list, teams_messages: list, slack_mes
                     if parsed_date > last_digest_at:
                         filtered_slack.append(msg)
         slack_messages = filtered_slack
-    
+
     if not emails and not teams_messages and not slack_messages:
         return "No new emails or messages to review. You're all caught up!"
 
@@ -697,7 +703,7 @@ async def summarize_communications(emails: list, teams_messages: list, slack_mes
     if vip_contacts:
         vip_list = ", ".join(vip_contacts)
         vip_context = f"\n\nVIP CONTACTS (always bold these names and prioritize them first): {vip_list}\n"
-    
+
     # Build personality context (Donna Paulsen style)
     personality_context = ""
     if personality_tone < 0.3:
@@ -706,7 +712,7 @@ async def summarize_communications(emails: list, teams_messages: list, slack_mes
         personality_context = "Use Donna's natural confident, witty, and sharp tone. Be professional but with undeniable personality and flair. Clever and perceptive."
     else:
         personality_context = "Let Donna's sassy, witty, and playful side shine. Be confident, sharp, and speak with style and flair while staying professional."
-    
+
     prompt = f"""You are Donna, an executive assistant. The user wants a briefing on their communications.
 {vip_context}
 {email_text}{teams_text}{slack_text}
@@ -745,37 +751,18 @@ Group newsletters, automated emails, and status reports into the final "Other up
 Always bold ALL sender names using <b>Name</b> HTML tags. Only include platform headers for platforms that have messages."""
 
     try:
-        # Try 70B, fallback to 8B on rate limit
-        model = "llama-3.3-70b-versatile"
-        try:
-            response = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": "You are Donna, a professional executive assistant. Provide briefings using short bullet-style sentences. Urgent items first, explicit actions required. No long paragraphs."},
-                    {"role": "user", "content": prompt}
-                ],
+        model = genai.GenerativeModel(
+            model_name=PRIMARY_MODEL,
+            system_instruction="You are Donna, a professional executive assistant. Provide briefings using short bullet-style sentences. Urgent items first, explicit actions required. No long paragraphs.",
+            generation_config=genai.GenerationConfig(
                 temperature=0.6,
-                max_tokens=300  # Reduced from 500
+                max_output_tokens=300
             )
-        except Exception as e:
-            error_str = str(e).lower()
-            error_type = type(e).__name__.lower()
-            if "rate limit" in error_str or "429" in error_str or "quota" in error_str or "ratelimit" in error_type:
-                print(f"[LLM] Rate limit hit, falling back to 8B model for summary")
-                model = "llama-3.1-8b-instant"  # Correct model name for Groq 8B model
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=[
-                        {"role": "system", "content": "You are Donna, a professional executive assistant. Provide briefings using short bullet-style sentences. Urgent items first, explicit actions required. No long paragraphs."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=0.6,
-                    max_tokens=300
-                )
-            else:
-                raise
+        )
 
-        summary = response.choices[0].message.content.strip()
+        response = model.generate_content(prompt)
+        summary = response.text.strip()
+
         # Post-process summary: preserve platform headers, HTML bold tags, trim to ~12 lines
         summary = _post_process_summary(summary, max_lines=12)
         return summary

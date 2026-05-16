@@ -17,7 +17,10 @@ class Settings:
         self.database_url: str = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./agent.db")
         self.encryption_key: str = os.getenv("ENCRYPTION_KEY", "dev-encryption-key-32-bytes-long")
         
-        # Groq (for LLM and Whisper)
+        # Gemini (for LLM)
+        self.gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
+
+        # Groq (for Whisper audio transcription - fallback)
         self.groq_api_key: str = os.getenv("GROQ_API_KEY", "")
         
         # Base URL for OAuth redirects (environment-based)

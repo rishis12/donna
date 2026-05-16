@@ -199,7 +199,11 @@ export default function Onboarding() {
 
         <button
           onClick={handleContinue}
-          className="w-full bg-primary-400 hover:bg-primary-500 text-white font-medium py-3.5 rounded-2xl flex items-center justify-center gap-2 transition-all"
+          className={`w-full font-medium py-3.5 rounded-2xl flex items-center justify-center gap-2 transition-all cursor-pointer ${
+            googleConnected || slackConnected
+              ? 'bg-primary-500 hover:bg-primary-600 text-white shadow-lg shadow-primary-500/30'
+              : 'bg-surface-200 hover:bg-surface-300 text-surface-600'
+          }`}
         >
           {googleConnected || slackConnected ? 'Continue' : 'Skip for now'}
           <ArrowRight className="w-4 h-4" />

@@ -333,7 +333,26 @@ async def process_utterance(
         else:
             result["response"] = "I need to know who to send the email to. Please provide the recipient's email address."
             result["requires_confirmation"] = False
-    
+
+    # Handle send_email intent - show preview and require confirmation before sending
+    if result.get("intent") == "send_email":
+        entities = result.get("entities", {})
+        to = entities.get("to", "")
+        subject = entities.get("subject", "")
+        body = entities.get("body", "")
+
+        if to and "@" in to:
+            # Show preview and require confirmation
+            preview = f"📧 Ready to Send:\n\nTo: {to}\nSubject: {subject}\n\n{body}\n\nShould I send this email now?"
+            result["response"] = preview
+            result["requires_confirmation"] = True
+        elif to:
+            result["response"] = f"I need {to}'s email address to send the email. Could you provide their email address?"
+            result["requires_confirmation"] = False
+        else:
+            result["response"] = "I need to know who to send the email to. Please provide the recipient's email address."
+            result["requires_confirmation"] = False
+
     # Handle calendar/reminder intents - execute immediately if no confirmation needed
     result = await _handle_calendar_intents(result, user, db)
     

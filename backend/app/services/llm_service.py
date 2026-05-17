@@ -16,8 +16,8 @@ settings = get_settings()
 genai.configure(api_key=settings.gemini_api_key)
 
 # Initialize models
-PRIMARY_MODEL = "gemini-1.5-flash"
-FALLBACK_MODEL = "gemini-1.5-flash"  # Same model, Gemini has generous rate limits
+PRIMARY_MODEL = "gemini-2.0-flash"
+FALLBACK_MODEL = "gemini-1.5-pro"  # Fallback to pro model
 
 
 def _build_personality_prompt(tone: float) -> str:
@@ -445,7 +445,7 @@ async def transcribe_audio(audio_data: bytes) -> str:
     """
     try:
         # Try Gemini multimodal transcription first
-        model = genai.GenerativeModel(model_name="gemini-1.5-flash")
+        model = genai.GenerativeModel(model_name=PRIMARY_MODEL)
 
         # Gemini can process audio directly
         response = model.generate_content([

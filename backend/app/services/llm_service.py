@@ -15,9 +15,9 @@ settings = get_settings()
 # Configure Gemini
 genai.configure(api_key=settings.gemini_api_key)
 
-# Initialize models - using stable model names
-PRIMARY_MODEL = "gemini-pro"
-FALLBACK_MODEL = "gemini-pro"
+# Initialize models - using current stable model names (2026)
+PRIMARY_MODEL = "gemini-2.5-flash"
+FALLBACK_MODEL = "gemini-2.5-flash"
 
 
 def _build_personality_prompt(tone: float) -> str:

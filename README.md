@@ -2,7 +2,9 @@
 
 A cross-platform desktop AI assistant inspired by Donna Paulsen from Suits. Donna sits in your system tray and helps you manage your calendar, emails, reminders, and communications via natural language or voice.
 
-![Donna Demo](donna-demo.gif)
+<p align="center">
+  <img src="donna-demo.gif" alt="Donna Demo" width="500">
+</p>
 
 ## Features
 
